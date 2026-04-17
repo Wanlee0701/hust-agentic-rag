@@ -1,0 +1,1 @@
+# Embeddings module - Vector generation and caching

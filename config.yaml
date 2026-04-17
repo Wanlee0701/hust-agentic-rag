@@ -1,0 +1,62 @@
+# Configuration File - Student Regulation Chatbot
+
+system:
+  name: "Student Regulation Chatbot"
+  version: "1.0.0"
+  environment: "development"  # development, production
+
+llm:
+  provider: "ollama"
+  model_name: "mistral"
+  base_url: "http://localhost:11434"
+  temperature: 0.3
+  max_tokens: 1024
+  timeout_seconds: 30
+
+embedding:
+  model_name: "sentence-transformers/distiluse-base-multilingual-cased-v2"
+  cache_folder: "./models"
+  batch_size: 32
+  dimension: 768
+
+vectordb:
+  provider: "chroma"
+  persist_directory: "./data/chroma"
+  collection_name: "regulations"
+
+retrieval:
+  top_k: 5
+  semantic_weight: 0.6
+  keyword_weight: 0.4
+  similarity_threshold: 0.5
+
+agent:
+  type: "react"
+  max_iterations: 5
+  confidence_threshold: 0.75
+
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "./logs/chatbot.log"
+  max_size_mb: 100
+  backup_count: 5
+
+frontend:
+  framework: "streamlit"
+  port: 8501
+  theme: "light"
+
+api:
+  enabled: false
+  port: 8000
+  host: "0.0.0.0"
+
+data_preparation:
+  chunk_size: 1000
+  chunk_overlap: 100
+  separators:
+    - "\n\n"
+    - "\n"
+    - ". "
+    - " "
+    - ""

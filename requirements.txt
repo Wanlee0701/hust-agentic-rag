@@ -1,0 +1,40 @@
+# Core LLM & Framework
+langchain
+ollama
+langchain_text_splitters
+langchain_core
+langchain_chroma
+langchain_huggingface
+# Frontend
+streamlit
+
+# Vector Database
+chromadb
+
+# Embeddings
+sentence-transformers
+
+# PDF Processing
+pypdf2
+pdfplumber
+
+# Utilities
+python-dotenv
+requests
+
+# API (Optional)
+fastapi
+uvicorn
+# Testing
+pytest
+pytest-cov
+
+# Data Processing
+pandas
+numpy
+tabulate
+# Language Detection
+langdetect
+
+# Monitoring & Logging
+python-json-logger
