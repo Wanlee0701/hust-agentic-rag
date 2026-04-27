@@ -1,10 +1,182 @@
 # Configuration File - Student Regulation Chatbot
+# ============================================================================
+# Bộ cấu hình toàn bộ hệ thống cho data preparation & embeddings
+# ============================================================================
 
 system:
   name: "Student Regulation Chatbot"
   version: "1.0.0"
   environment: "development"  # development, production
 
+# ============================================================================
+# DATA PATHS - Đường dẫn tới dữ liệu
+# ============================================================================
+data_paths:
+  # Thư mục chứa PDF gốc
+  knowledge_base_raw: "./knowledge_base/raw"
+  
+  # Thư mục output chính
+  output_base: "./data"
+  
+  # Sub-folders trong output
+  json_output: "./data"                    # Lưu JSON từ PDF
+  chunks_output: "./data/chunks"           # Lưu chunks JSON
+  chroma_db: "./data/chroma"              # Vector database
+  logs_output: "./logs"                    # Log files
+
+# ============================================================================
+# PDF PROCESSING - Xử lý PDF
+# ============================================================================
+pdf_processing:
+  # Metadata mapping cho từng loại tài liệu
+  metadata_mapping:
+    "HD_hoc_chuyen_tiep_ky_su_180TC.pdf":
+      doc_type: "Hướng dẫn chuyển tiếp kỹ sư"
+      effective_date: "2025-05-28"
+      applicable_students: "ALL"
+      status: "active"
+    
+    "Quy_che_25.pdf":
+      doc_type: "Quy chế đào tạo"
+      effective_date: "2025-05-28"
+      applicable_students: "ALL"
+      status: "active"
+    
+    "Quy_che_CTSV_ĐHBK_HN_2025310_final.pdf":
+      doc_type: "Quy chế công tác sinh viên"
+      effective_date: "2025-03-10"
+      applicable_students: "All"
+      status: "active"
+    
+    "Hoc_bong_TDN_2023.pdf":
+      doc_type: "QĐ Học bổng Trần Đại Nghĩa"
+      effective_date: "2023"
+      applicable_students: "All"
+      status: "active"
+    
+    "Hoc_bong_KKHT_2023.pdf":
+      doc_type: "QĐ Học bổng KKHT"
+      effective_date: "2023"
+      applicable_students: "All"
+      status: "active"
+    
+    "QD_NN_K68.pdf":
+      doc_type: "Quyết định ngoại ngữ K68"
+      effective_date: "2024"
+      applicable_students: ">=K68"
+      status: "active"
+    
+    "QD_NN_K70.pdf":
+      doc_type: "Quyết định ngoại ngữ K70"
+      effective_date: "2025"
+      applicable_students: ">= K70"
+      status: "active"
+    
+    "QD_NN_K65.pdf":
+      doc_type: "Quyết định ngoại ngữ K65"
+      effective_date: "2020"
+      applicable_students: ">= K65"
+      status: "active"
+    
+    "QD_chuyen_doi_hoc_phan_tuong_duong.pdf":
+      doc_type: "QĐ Chuyển đổi học phần tương đương"
+      effective_date: "2021"
+      applicable_students: "All"
+      status: "active"
+  
+  # Regex patterns để xóa khỏi PDF
+  text_cleanup_patterns:
+    - "^\\d+\\s*$"                                    # Số trang
+    - "BỘ GIÁO DỤC VÀ ĐÀO TẠO"
+    - "ĐẠI HỌC BÁCH KHOA HÀ NỘI"
+    - "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM"
+    - "Độc lập - Tự do - Hạnh phúc"
+    - "Ban hành kèm theo Quyết định số.*"
+    - "HÀ NỘI,.*"
+    - "Số:"
+    - "Căn cứ"
+    - "PGS."
+    - "KT."
+    - "PHÓ GIÁM ĐỐC"
+    - "Nơi nhận:"
+
+# ============================================================================
+# CHUNKING - Tách documents thành chunks
+# ============================================================================
+chunking:
+  # Kích thước chunk
+  chunk_size: 1000
+  
+  # Overlap giữa các chunks
+  chunk_overlap: 200
+  
+  # Markdown headers để tách theo cấu trúc
+  markdown_headers:
+    - level: "#"
+      name: "chapter_title"
+      description: "Chương chính"
+    - level: "##"
+      name: "article_title"
+      description: "Điều/Mục"
+  
+
+# ============================================================================
+# EMBEDDING - Embeddings model
+# ============================================================================
+embedding:
+  # Model name từ HuggingFace
+  model_name: "BAAI/bge-m3"
+  
+  # Alternative models (có thể thay đổi)
+  # model_name: "intfloat/multilingual-e5-large"
+  # model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+  
+  # Thư mục cache models
+  cache_folder: "./models"
+  
+  # Batch size khi embedding
+  batch_size: 32
+  
+  # Vector dimension
+  dimension: 768
+
+# ============================================================================
+# VECTOR DATABASE - Chroma
+# ============================================================================
+vectordb:
+  provider: "chroma"
+  
+  # Đường dẫn persist directory
+  persist_directory: "./data/chroma"
+  
+  # Tên collection
+  collection_name: "student_regulations"
+  
+  # Tùy chọn Chroma (advanced)
+  options:
+    is_persistent: true
+    anonymized_telemetry: false
+
+# ============================================================================
+# RETRIEVAL - Tìm kiếm và lấy dữ liệu
+# ============================================================================
+retrieval:
+  # Số lượng documents trả về
+  top_k: 3
+  
+  # Ngưỡng similarity score (0-1)
+  # 0 = không filter, 1 = chỉ lấy perfect match
+  similarity_threshold: 0.5
+  
+  # Trọng số cho semantic search
+  semantic_weight: 0.6
+  
+  # Trọng số cho keyword search
+  keyword_weight: 0.4
+
+# ============================================================================
+# LLM - Language Model (Ollama)
+# ============================================================================
 llm:
   provider: "ollama"
   model_name: "mistral"
@@ -13,50 +185,36 @@ llm:
   max_tokens: 1024
   timeout_seconds: 30
 
-embedding:
-  model_name: "sentence-transformers/distiluse-base-multilingual-cased-v2"
-  cache_folder: "./models"
-  batch_size: 32
-  dimension: 768
-
-vectordb:
-  provider: "chroma"
-  persist_directory: "./data/chroma"
-  collection_name: "regulations"
-
-retrieval:
-  top_k: 5
-  semantic_weight: 0.6
-  keyword_weight: 0.4
-  similarity_threshold: 0.5
-
+# ============================================================================
+# AGENT - Agentic RAG
+# ============================================================================
 agent:
   type: "react"
   max_iterations: 5
   confidence_threshold: 0.75
 
+# ============================================================================
+# LOGGING - Log settings
+# ============================================================================
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
   file: "./logs/chatbot.log"
   max_size_mb: 100
   backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
+# ============================================================================
+# FRONTEND - Streamlit
+# ============================================================================
 frontend:
   framework: "streamlit"
   port: 8501
   theme: "light"
 
+# ============================================================================
+# API - REST API settings
+# ============================================================================
 api:
   enabled: false
   port: 8000
   host: "0.0.0.0"
-
-data_preparation:
-  chunk_size: 1000
-  chunk_overlap: 100
-  separators:
-    - "\n\n"
-    - "\n"
-    - ". "
-    - " "
-    - ""
