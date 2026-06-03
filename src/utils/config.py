@@ -45,6 +45,12 @@ class ConfigManager:
         with open(config_file, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
 
+        # Override từ biến môi trường (Environment Variables) cho Docker
+        import os
+        llm_url = os.getenv("LLM_SERVICE_URL")
+        if llm_url and "llm" in config:
+            config["llm"]["base_url"] = llm_url
+
         ConfigManager._cache[config_path] = config
         return config
 
