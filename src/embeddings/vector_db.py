@@ -128,10 +128,10 @@ class VectorDatabaseManager:
         Args:
             query: Query string
             k: Số lượng kết quả (nếu None, dùng top_k từ config)
-            score_threshold: Ngưỡng similarity score (nếu None, dùng từ config)
+            score_threshold: Ngưỡng similarity score [0,1] (nếu None, dùng từ config)
             
         Returns:
-            List tuples: (Document, similarity_score)
+            List tuples: (Document, similarity_score) — score trong [0,1], CAO hơn = TỐT hơn
         """
         try:
             # Dùng config nếu không chỉ định parameter
@@ -139,19 +139,33 @@ class VectorDatabaseManager:
                 k = self.retrieval_config.get("top_k", 5)
             
             if score_threshold is None:
-                score_threshold = self.retrieval_config.get("similarity_threshold", 0.5)
+                score_threshold = self.retrieval_config.get("similarity_threshold", 0.35)
             
             logger.debug(f"🔍 Searching for: {query} (k={k}, threshold={score_threshold})")
             
-            # Tìm kiếm tương tự
-            results = self.vectorstore.similarity_search_with_score(query, k=k)
+            # LƯU Ý: langchain_chroma.similarity_search_with_score trả về L2 distance
+            # (càng NHỎ càng tốt). Chuyển về similarity score [0,1] để trực quan hơn.
+            raw_results = self.vectorstore.similarity_search_with_score(query, k=k)
             
-            # Filter theo threshold nếu cần
+            # Chuyển L2 distance → similarity: sim = 1 / (1 + distance)
+            # distance=0   → sim=1.00 (perfect match)
+            # distance=0.5 → sim=0.67
+            # distance=1.0 → sim=0.50
+            # distance=2.0 → sim=0.33
+            results = []
+            for doc, distance in raw_results:
+                similarity = round(1.0 / (1.0 + distance), 4)
+                results.append((doc, similarity))
+            
+            # Filter: chỉ giữ những kết quả có similarity >= threshold
             if score_threshold > 0:
-                results = [(doc, score) for doc, score in results 
-                          if score >= score_threshold]
+                results = [(doc, score) for doc, score in results
+                           if score >= score_threshold]
             
-            logger.debug(f"✅ Found {len(results)} similar documents")
+            # Sắp xếp theo similarity giảm dần (tốt nhất trước)
+            results.sort(key=lambda x: x[1], reverse=True)
+            
+            logger.debug(f"✅ Found {len(results)} similar documents (threshold={score_threshold})")
             return results
             
         except Exception as e:

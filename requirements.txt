@@ -1,10 +1,12 @@
 # Core LLM & Framework
 langchain
-ollama
+langchain_ollama
+langchain_classic
 langchain_text_splitters
 langchain_core
 langchain_chroma
 langchain_huggingface
+langgraph
 # Frontend
 streamlit
 

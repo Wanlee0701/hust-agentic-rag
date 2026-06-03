@@ -1,234 +1,130 @@
-# Student Regulation Chatbot - AgenticRAG Implementation
+# 🎓 HUST AgenticRAG Chatbot
 
-A comprehensive AI-powered chatbot for answering student regulation and policy questions using AgenticRAG with local models for privacy.
+![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
+![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)
+![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-black.svg)
+![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector_DB-orange.svg)
 
-## 🎯 Project Overview
-
-This project implements an intelligent chatbot that uses:
-- **AgenticRAG Architecture:** AI Agent with reasoning loop for complex queries
-- **Local LLM:** Ollama + Mistral 7B (no cloud, full privacy)
-- **Hybrid Retrieval:** Semantic + BM25 keyword search
-- **Multilingual Support:** Vietnamese + English (CLIR)
-- **Privacy-First:** All data stays local
-
-## 📚 Documentation
-
-Complete documentation available in `docs/` folder:
-
-- **01-RAG-Fundamentals.md** ⭐ START HERE
-- **02-AgenticRAG-Architecture.md** - Agent concepts
-- **03-CLIR-Multilingual.md** - Language support
-- **04-System-Architecture.md** - Full system design
-- **05-Tech-Stack-Explanation.md** - Technology choices
-- **06-Data-Preparation-Guide.md** - Build knowledge base
-- **07-Retrieval-Component.md** - Search implementation
-- **08-Agent-Design.md** - Agent development
-- **09-Prompt-Engineering.md** - LLM optimization
-- **10-Testing-Strategy.md** - Testing approach
-- **11-Deployment-Guide.md** - Deployment setup
-- **12-API-Reference.md** - API documentation
-
-👉 **Read `docs/README.md` first for learning guide!**
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Python 3.10+
-- 8GB RAM (16GB recommended)
-- 10GB disk space
-- Optional: NVIDIA GPU with CUDA
-
-### 1. Setup Environment
-
-```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### 2. Install Ollama
-
-Download from: https://ollama.ai/download
-
-```bash
-# Pull Mistral model
-ollama pull mistral
-
-# Verify
-ollama list
-```
-
-### 3. Prepare Knowledge Base
-
-```bash
-# Place your PDF files in:
-knowledge_base/raw/
-
-# Run data preparation
-python data_preparation.py
-```
-
-### 4. Run Chatbot
-
-```bash
-streamlit run app.py
-# Opens at http://localhost:8501
-```
-
-## 📁 Project Structure
-
-```
-ĐATN/
-├── docs/                          # 📚 All documentation (12 files)
-│   ├── 01-RAG-Fundamentals.md
-│   ├── 02-AgenticRAG-Architecture.md
-│   ├── ... (9 more files)
-│   └── README.md
-│
-├── src/
-│   ├── agent/                     # 🤖 Agent logic
-│   ├── retrieval/                 # 🔍 Search component
-│   ├── embeddings/                # 🧠 Vector generation
-│   ├── api/                       # 🔌 REST API (optional)
-│   └── main.py                    # Entry point
-│
-├── knowledge_base/
-│   └── raw/                       # 📄 Your PDF files here
-│
-├── data/
-│   ├── chroma/                    # Vector store
-│   └── embeddings.pkl             # Cached embeddings
-│
-├── logs/                          # 📊 Application logs
-├── tests/                         # 🧪 Test files
-├── models/                        # 🤖 Downloaded models
-│
-├── requirements.txt               # Dependencies
-├── config.yaml                    # Configuration
-├── docker-compose.yml             # Docker setup
-├── Dockerfile                     # Container config
-├── .env.example                   # Environment template
-└── README.md                      # This file
-```
-
-## 🐳 Docker Deployment
-
-```bash
-# Build and start
-docker-compose up --build
-
-# In another terminal, pull model:
-docker exec ollama-service ollama pull mistral
-
-# Prepare knowledge base
-python data_preparation.py
-
-# Access at http://localhost:8501
-```
-
-## 🧪 Testing
-
-```bash
-# Run unit tests
-pytest tests/
-
-# Run with coverage
-pytest --cov=src tests/
-```
-
-## 📊 Configuration
-
-Edit `config.yaml` to customize:
-- LLM model and parameters
-- Embedding settings
-- Vector DB configuration
-- Agent behavior
-- Logging levels
-
-## 🔑 Key Features
-
-✅ **AgenticRAG:** Multi-step reasoning with agent orchestration
-✅ **Hybrid Retrieval:** Semantic + keyword-based search
-✅ **Multilingual:** Vietnamese + English with CLIR
-✅ **Privacy:** All local, no cloud APIs
-✅ **Fast:** ~2-5s per query on CPU
-✅ **Scalable:** Easy Docker deployment
-
-## 📈 Performance Targets
-
-- **Accuracy:** >80% for test questions
-- **Latency:** <3s average, <5s P95
-- **Precision:** >0.80
-- **Recall:** >0.70
-- **F1 Score:** >0.75
-
-## 🛠️ Development
-
-### Add New Components
-
-1. Create module in `src/`
-2. Add tests in `tests/`
-3. Update documentation
-4. Reference in main
-
-### Modify Prompts
-
-Edit prompt templates in:
-- `src/agent/prompts.py`
-- `src/api/models.py`
-
-### Customize Retrieval
-
-Adjust in `config.yaml`:
-```yaml
-retrieval:
-  semantic_weight: 0.6
-  keyword_weight: 0.4
-  top_k: 5
-```
-
-## 📝 Logging
-
-Logs stored in `logs/chatbot.log`
-
-Verbosity levels in `config.yaml`:
-```yaml
-logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
-```
-
-## 🚨 Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Ollama not responding | Run `ollama serve` in new terminal |
-| Model not downloaded | `ollama pull mistral` |
-| Port already in use | Change port in `config.yaml` |
-| Out of memory | Reduce batch_size, use smaller model |
-
-See `docs/11-Deployment-Guide.md` for more troubleshooting.
-
-## 📞 Support
-
-- 📚 **Theory questions:** See `docs/01-05` (foundation docs)
-- 💻 **Code questions:** See `docs/06-12` (implementation docs)
-- 🚀 **Deployment help:** See `docs/11-Deployment-Guide.md`
-- 🔌 **API help:** See `docs/12-API-Reference.md`
-
-## 📄 License
-
-This project is for educational purposes.
-
-## 🙏 Acknowledgments
-
-- Built with [LangChain](https://langchain.com/)
-- LLM: [Ollama](https://ollama.ai/) + [Mistral](https://mistral.ai/)
-- Embeddings: [Sentence-Transformers](https://www.sbert.net/)
-- Vector DB: [Chroma](https://www.trychroma.com/)
+Hệ thống Chatbot AI thông minh dành riêng cho việc giải đáp **Quy chế và Chính sách sinh viên Đại học Bách khoa Hà Nội (HUST)**. Dự án ứng dụng kiến trúc **AgenticRAG** tiên tiến kết hợp với mô hình ngôn ngữ lớn (LLM) chạy hoàn toàn local (Ollama + Mistral/Qwen), đảm bảo 100% quyền riêng tư dữ liệu và có thể triển khai dễ dàng mà không tốn phí API.
 
 ---
 
-**Ready to start?** Read `docs/README.md` and follow the learning guide! 🚀
+## 🎯 Bài toán đặt ra
+
+Sinh viên thường gặp khó khăn khi phải tra cứu thông tin từ hàng loạt văn bản quy chế dài dòng, phức tạp (Quy chế đào tạo, Quy chế học bổng, Chuẩn ngoại ngữ, v.v.). Các công cụ tìm kiếm truyền thống thường chỉ trả về từ khóa mà không hiểu được ngữ cảnh câu hỏi.
+
+**HUST AgenticRAG Chatbot** giải quyết vấn đề này bằng cách:
+1. **Agent Reasoning:** AI tự động suy luận, lập kế hoạch tìm kiếm và tổng hợp thông tin từ nhiều nguồn để đưa ra câu trả lời chính xác nhất.
+2. **Local & Private:** Không sử dụng API của bên thứ ba (như OpenAI). Toàn bộ dữ liệu và quá trình xử lý diễn ra ngay trên máy của bạn.
+3. **Trích dẫn minh bạch:** Mỗi câu trả lời đều đi kèm nguồn gốc rõ ràng (Tên file, Số Điều, Chương) giúp sinh viên dễ dàng đối chiếu.
+
+## ✨ Tính năng nổi bật
+
+- 🤖 **Kiến trúc AgenticRAG:** Thay vì RAG truyền thống (chỉ tìm kiếm và trả lời), Agent có khả năng tự đánh giá kết quả tìm kiếm, tra cứu lại nếu thiếu thông tin (Fallback Retrieval) và chấm điểm độ tin cậy (Confidence Score).
+- 🔍 **Hybrid Retrieval:** Kết hợp tìm kiếm ngữ nghĩa (Semantic Search với `bge-m3`) và tìm kiếm từ khóa.
+- 💻 **Giao diện trực quan:** Streamlit UI hiện đại với lịch sử trò chuyện, hiển thị tiến trình suy luận (Reasoning Steps) và thanh độ tin cậy.
+- 🔒 **100% Local:** Triển khai qua Ollama, bảo mật tuyệt đối dữ liệu nội bộ.
+
+---
+
+## 🚀 Hướng dẫn Cài đặt & Deploy
+
+### 📋 Yêu cầu hệ thống (Requirements)
+- **Hệ điều hành:** Windows / Linux / macOS
+- **Python:** Phiên bản 3.10 trở lên
+- **RAM:** Tối thiểu 8GB (Khuyến nghị 16GB để chạy mượt LLM local)
+- **Ollama:** Cài đặt sẵn trên máy
+
+### 1️⃣ Cài đặt môi trường
+
+Clone repository về máy:
+```bash
+git clone https://github.com/your-username/hust-agentic-rag.git
+cd hust-agentic-rag
+```
+
+Tạo môi trường ảo (Virtual Environment) và cài đặt thư viện:
+```bash
+# Windows
+python -m venv venv
+venv\Scripts\activate
+
+# Linux/macOS
+python3 -m venv venv
+source venv/bin/activate
+
+# Cài đặt dependencies
+pip install -r requirements.txt
+```
+
+### 2️⃣ Cài đặt Ollama & Mô hình LLM
+
+1. Tải và cài đặt Ollama tại [ollama.com](https://ollama.com/)
+2. Mở terminal và tải mô hình `mistral` (hoặc `qwen3.5:4b` nếu máy yếu hơn):
+```bash
+ollama pull mistral
+```
+3. Đảm bảo Ollama đang chạy ngầm (`ollama serve`).
+
+### 3️⃣ Xây dựng Cơ sở tri thức (Vector DB)
+
+Hệ thống đã có sẵn thư mục `knowledge_base/raw/` chứa các file PDF quy chế. Để xây dựng Vector Database:
+
+```bash
+python scripts/build_knowledge_base.py
+```
+*Quá trình này sẽ parse PDF, chia nhỏ (chunking), nhúng (embedding với bge-m3) và lưu vào ChromaDB tại thư mục `data/chroma/`.*
+
+### 4️⃣ Khởi chạy Ứng dụng
+
+Khởi động giao diện Streamlit:
+```bash
+streamlit run app.py
+```
+Trình duyệt sẽ tự động mở tại địa chỉ `http://localhost:8501`.
+
+---
+
+## 📁 Cấu trúc Thư mục
+
+Dự án được tổ chức theo chuẩn Modular Architecture:
+
+```text
+ĐATN/
+├── app.py                 # UI entry point (Streamlit)
+├── config.yaml            # Cấu hình trung tâm (LLM, Retrieval, vector DB)
+├── src/                   # Source code chính
+│   ├── agent/             # Logic Agent (Orchestrator, Tools, Prompts, State)
+│   ├── embeddings/        # Xử lý PDF và Vector Database
+│   ├── pipeline/          # Data pipeline
+│   └── utils/             # Tiện ích (Logger, Config)
+├── scripts/               # Scripts tiện ích (build DB, reset DB)
+├── docs/                  # Tài liệu kiến trúc và hướng dẫn chi tiết
+├── data/                  # Dữ liệu phái sinh (JSON, chunks, chroma DB)
+└── knowledge_base/raw/    # PDF văn bản quy chế gốc
+```
+
+---
+
+## ⚙️ Cấu hình (Configuration)
+
+Bạn có thể tùy chỉnh toàn bộ hệ thống tại file `config.yaml`:
+- Thay đổi LLM (ví dụ: chuyển từ `mistral` sang `qwen`)
+- Thay đổi top_k, similarity_threshold cho tìm kiếm
+- Thay đổi chunk_size, chunk_overlap khi xử lý PDF
+
+## 📚 Tài liệu chi tiết
+
+Vui lòng tham khảo thư mục `docs/` để tìm hiểu sâu hơn về kiến trúc:
+- `docs/02-AgenticRAG-Architecture.md`: Kiến trúc AgenticRAG
+- `docs/04-System-Architecture.md`: Thiết kế hệ thống tổng thể
+- `docs/09-Prompt-Engineering.md`: Kỹ thuật thiết kế Prompt cho Agent
+
+---
+
+## 🤝 Đóng góp (Contributing)
+
+Mọi đóng góp (Pull Requests) để cải thiện hệ thống, tối ưu hóa LLM prompts hoặc mở rộng bộ dữ liệu đều được hoan nghênh! Vui lòng tạo Issue trước khi submit PR lớn.
+
+## 📄 Giấy phép (License)
+Dự án được phát triển phục vụ mục đích giáo dục và nghiên cứu.

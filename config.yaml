@@ -137,8 +137,8 @@ embedding:
   # Batch size khi embedding
   batch_size: 32
   
-  # Vector dimension
-  dimension: 768
+  # Vector dimension (bge-m3 thực tế output 1024-dim)
+  dimension: 1024
 
 # ============================================================================
 # VECTOR DATABASE - Chroma
@@ -166,7 +166,8 @@ retrieval:
   
   # Ngưỡng similarity score (0-1)
   # 0 = không filter, 1 = chỉ lấy perfect match
-  similarity_threshold: 0.5
+  # bge-m3 cosine distance: 0.35 là ngưỡng hợp lý cho tiếng Việt
+  similarity_threshold: 0.35
   
   # Trọng số cho semantic search
   semantic_weight: 0.6
