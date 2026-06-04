@@ -54,26 +54,24 @@ class EmbeddingModelManager:
         dựa trên cấu hình trong config.yaml
         """
         try:
-            model_name = self.embedding_config.get(
-                "model_name",
-                # "intfloat/multilingual-e5-large"
-            )
-            cache_folder = self.embedding_config.get("cache_folder", "./models")
+            model_name = self.embedding_config.get("model_name", "BAAI/bge-m3")
+            cache_folder = self.embedding_config.get("cache_folder")
             batch_size = self.embedding_config.get("batch_size", 32)
             
             logger.info(f"🔄 Initializing embedding model: {model_name}")
-            logger.info(f"   Cache folder: {cache_folder}")
+            logger.info(f"   Cache folder: {cache_folder if cache_folder else 'System Default (C drive)'}")
             logger.info(f"   Batch size: {batch_size}")
             
-            # Tạo cache folder nếu chưa tồn tại
-            Path(cache_folder).mkdir(parents=True, exist_ok=True)
+            # Tạo cache folder nếu được chỉ định
+            if cache_folder:
+                Path(cache_folder).mkdir(parents=True, exist_ok=True)
             
             # Load model từ HuggingFace
-            self.model = HuggingFaceEmbeddings(
-                model_name=model_name,
-                cache_folder=cache_folder,
-                encode_kwargs={"batch_size": batch_size}
-            )
+            kwargs = {"model_name": model_name, "encode_kwargs": {"batch_size": batch_size}}
+            if cache_folder:
+                kwargs["cache_folder"] = cache_folder
+                
+            self.model = HuggingFaceEmbeddings(**kwargs)
             
             logger.info(f"✅ Embedding model loaded successfully")
             logger.info(f"   Model dimension: {self.embedding_config.get('dimension', 'N/A')}")

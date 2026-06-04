@@ -131,8 +131,8 @@ embedding:
   # model_name: "intfloat/multilingual-e5-large"
   # model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
   
-  # Thư mục cache models
-  cache_folder: "./models"
+  # Thư mục cache models (Bỏ comment nếu muốn lưu trong dự án)
+  # cache_folder: "./models"
   
   # Batch size khi embedding
   batch_size: 32
@@ -180,7 +180,7 @@ retrieval:
 # ============================================================================
 llm:
   provider: "ollama"
-  model_name: "mistral"
+  model_name: "gemma-4-E4B"
   base_url: "http://localhost:11434"
   temperature: 0.3
   max_tokens: 1024

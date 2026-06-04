@@ -1,128 +1,134 @@
-# 🎓 HUST AgenticRAG Chatbot
+# 🤖 AgenticRAG Chatbot Framework
 
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)
 ![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-black.svg)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)
 
-An intelligent AI Chatbot system specifically designed to answer questions regarding **Student Regulations and Policies at Hanoi University of Science and Technology (HUST)**. This project leverages an advanced **AgenticRAG** architecture combined with a fully local Large Language Model (Ollama + Mistral/Qwen), ensuring 100% data privacy and easy, cost-free deployment.
+An open-source, highly customizable **AgenticRAG (Retrieval-Augmented Generation)** framework designed to help you quickly build an intelligent document-answering chatbot. This system uses fully local Large Language Models (via Ollama) ensuring **100% data privacy**, combined with an advanced reasoning agent that synthesizes information, evaluates its own searches, and provides transparent citations.
 
 ---
 
-## 🎯 The Problem
+## ✨ Why AgenticRAG?
 
-Students often struggle to find specific information within lengthy and complex regulation documents (e.g., Training Regulations, Scholarship Policies, Foreign Language Standards). Traditional search tools only return keyword matches without understanding the context.
-
-**HUST AgenticRAG Chatbot** solves this by:
-1. **Agent Reasoning:** The AI autonomously reasons, plans its search strategy, and synthesizes information from multiple sources to provide the most accurate answer.
-2. **Local & Private:** No third-party APIs (like OpenAI) are used. All data processing and generation happen directly on your server or local machine.
-3. **Transparent Citations:** Every answer includes clear references to its sources (File Name, Article Number, Chapter), making it easy to verify.
-
-## ✨ Key Features
-
-- 🐳 **Docker-Ready Server Deployment:** Packaged with `Dockerfile` and `docker-compose.yml`. Just one command to deploy the entire system (App + LLM) and host it securely on any server.
-- 🤖 **AgenticRAG Architecture:** The Agent can self-evaluate search results, retry if information is missing (Fallback Retrieval), and score its own confidence.
-- 🔍 **Hybrid Retrieval:** Combines semantic search (`bge-m3` embedding model) with keyword-based search for maximum accuracy.
-- 💻 **Intuitive UI:** Modern Streamlit interface featuring chat history, expandable reasoning steps, and confidence indicators.
+Traditional RAG systems simply search for keywords and pass them to an LLM. This **AgenticRAG** framework goes a step further:
+- 🧠 **Self-Reasoning:** The Agent plans its search, evaluates the retrieved context, and decides if it needs to search again with different queries (Fallback Retrieval) before answering.
+- 🎯 **Hybrid Retrieval:** Automatically combines Semantic Search (`BAAI/bge-m3`) with Keyword Search for pinpoint accuracy.
+- 🔒 **100% Local & Private:** No API keys required. Everything runs on your own hardware or server.
+- 🚀 **Plug & Play:** Just drop your PDF files into a folder, run a command, and your custom AI is ready.
 
 ---
 
-## 🚀 Installation & Deployment (Docker Method - Recommended)
+## 🛠️ Quick Start (Docker Deployment)
 
-The easiest and most reliable way to deploy this application—whether on your local machine or a remote server—is using Docker. This ensures that all environments, Python versions, and dependencies are perfectly isolated.
+Docker is the recommended way to deploy this framework, ensuring perfectly isolated environments.
 
-### 📋 Prerequisites
-- **Docker** and **Docker Compose** installed on your system.
-- Minimum 8GB RAM (16GB recommended for the LLM).
-
-### 1️⃣ Clone the Repository
+### 1. Clone the Repository
 ```bash
-git clone https://github.com/your-username/hust-agentic-rag.git
-cd hust-agentic-rag
+git clone https://github.com/your-username/agentic-rag-framework.git
+cd agentic-rag-framework
 ```
 
-### 2️⃣ Deploy the Entire System
-Run the following command to build the chatbot container and start the Ollama service:
+### 2. Add Your Documents
+Drop any PDF documents you want the chatbot to read into the `knowledge_base/raw/` directory.
+
+### 3. Start the System
+Run the following command to start both the Chatbot UI and the Ollama LLM server:
 ```bash
 docker-compose up -d --build
 ```
-*(This will run both the chatbot application and the Ollama server in the background).*
 
-### 3️⃣ Pull the LLM Model (First time only)
-Since Ollama is now running in a container, you need to tell it to download the `mistral` model:
+### 4. Pull the LLM Model (First time only)
+By default, the system uses the `gemma-4-E4B` model (or `mistral`). Tell the Ollama container to download it:
 ```bash
-docker exec -it ollama-service ollama pull mistral
+docker exec -it ollama-service ollama pull gemma-4-E4B
 ```
 
-### 4️⃣ Build the Knowledge Base (Vector DB)
-The system includes PDF regulation files in `knowledge_base/raw/`. To process them into the Vector Database:
+### 5. Build Your Knowledge Base
+Convert your PDFs into the Vector Database (ChromaDB):
 ```bash
 docker exec -it chatbot-app python scripts/build_knowledge_base.py
 ```
 
-### 5️⃣ Access the Application
-- **Local Machine:** Open your browser and go to `http://localhost:8501`
-- **Remote Server:** If you deployed this on a VPS or cloud server with IP `X.X.X.X`, anyone can access it via `http://X.X.X.X:8501`. The container automatically binds to `0.0.0.0`, making it accessible over the network.
+### 6. Access the App
+Open your browser and navigate to `http://localhost:8501`. (If hosted on a server, use `http://<server-ip>:8501`).
 
 ---
 
-## 🐍 Manual Installation (Python Method)
+## 🐍 Manual Installation (Without Docker)
 
-If you prefer running it directly without Docker:
-
-1. Create a virtual environment and install dependencies:
+1. **Setup Python Environment:**
    ```bash
    python -m venv venv
-   source venv/bin/activate  # Or venv\Scripts\activate on Windows
+   source venv/bin/activate  # Windows: venv\Scripts\activate
    pip install -r requirements.txt
    ```
-2. Install [Ollama](https://ollama.com/), run `ollama serve`, and pull the model: `ollama pull mistral`.
-3. Build the knowledge base: `python scripts/build_knowledge_base.py`.
-4. Run the app: `streamlit run app.py`.
+2. **Setup Ollama:** Install [Ollama](https://ollama.com/), run `ollama serve`, and pull your preferred model (`ollama pull gemma-4-E4B`).
+3. **Add PDFs:** Place your files in `knowledge_base/raw/`.
+4. **Build Vector DB:** `python scripts/build_knowledge_base.py`
+5. **Run the App:** `streamlit run app.py`
 
 ---
 
-## 📁 Directory Structure
+## ⚙️ Configuration (`config.yaml`)
 
-```text
-ĐATN/
-├── app.py                 # UI entry point (Streamlit)
-├── config.yaml            # Central configuration (LLM, Retrieval, vector DB)
-├── docker-compose.yml     # Docker Compose orchestration
-├── Dockerfile             # Chatbot container build file
-├── src/                   # Main source code
-│   ├── agent/             # Agent Logic (Orchestrator, Tools, Prompts, State)
-│   ├── embeddings/        # PDF processing and Vector Database
-│   ├── pipeline/          # Data pipeline
-│   └── utils/             # Utilities (Logger, Config)
-├── scripts/               # Utility scripts (build DB, reset DB)
-├── docs/                  # Architectural documentation
-├── data/                  # Derived data (JSON, chunks, chroma DB)
-└── knowledge_base/raw/    # Original regulation PDF files
+The entire framework is controlled by `config.yaml`. You don't need to touch the code to customize the chatbot for your specific use case.
+
+### 1. Changing the LLM Model
+Want to use a different model (e.g., `llama3`, `qwen`, `mistral`)? Just change the `model_name` and ensure you have pulled it via Ollama.
+```yaml
+llm:
+  provider: "ollama"
+  model_name: "llama3"       # <-- Change this!
+  base_url: "http://localhost:11434"
+```
+
+### 2. PDF Processing & Metadata
+If you have multiple documents targeting different user groups, you can define metadata in the config. The agent can use this metadata to filter searches.
+```yaml
+pdf_processing:
+  metadata_mapping:
+    "HR_Policy_2024.pdf":
+      doc_type: "Human Resources"
+      status: "active"
+```
+You can also define custom regex patterns to strip unwanted headers/footers from your PDFs during processing under `text_cleanup_patterns`.
+
+### 3. Tuning the Vector Database & Retrieval
+Adjust how documents are chunked and how strictly the search engine matches queries:
+```yaml
+chunking:
+  chunk_size: 1000
+  chunk_overlap: 200
+
+retrieval:
+  top_k: 3
+  similarity_threshold: 0.35   # Lower = broader search, Higher = stricter match
 ```
 
 ---
 
-## ⚙️ Configuration
+## 📁 Core Directory Structure
 
-You can customize the system behavior via the `config.yaml` file:
-- Change the LLM (e.g., switch from `mistral` to `qwen`)
-- Adjust `top_k` and `similarity_threshold` for the retrieval mechanism
-- Modify `chunk_size` and `chunk_overlap` for PDF processing
-*Note: If deploying via Docker, the LLM URL is automatically overridden by the `LLM_SERVICE_URL` environment variable defined in `docker-compose.yml`.*
+This repository strictly contains the core engine. Example documents, thesis materials, and development notebooks are excluded.
 
-## 📚 Detailed Documentation
-
-Please refer to the `docs/` folder for an in-depth understanding of the architecture:
-- `docs/02-AgenticRAG-Architecture.md`: Core AgenticRAG Architecture
-- `docs/04-System-Architecture.md`: Overall System Design
-- `docs/09-Prompt-Engineering.md`: Prompt Design Techniques for the Agent
-
----
+```text
+.
+├── app.py                 # Streamlit User Interface
+├── config.yaml            # Main Configuration File
+├── docker-compose.yml     # Docker Setup
+├── Dockerfile             # App Container Image
+├── src/                   # Core Engine
+│   ├── agent/             # Logic (Orchestrator, Tools, Prompts, State)
+│   ├── pipeline/          # Data Pipeline (PDF -> Vector)
+│   ├── embeddings/        # Embedding Models & Vector DB Connectors
+│   └── utils/             # Config & Logging utilities
+├── scripts/               # Utility scripts (build/reset Knowledge Base)
+└── knowledge_base/raw/    # -> DROP YOUR PDFs HERE <-
+```
 
 ## 🤝 Contributing
-
-We welcome all contributions (Pull Requests) to improve the system, optimize LLM prompts, or expand the dataset! Please create an Issue to discuss major changes before submitting a PR.
+Contributions are welcome! Please feel free to submit a Pull Request if you add new Agent capabilities, improve the Hybrid Retrieval, or add support for new Vector Databases.
 
 ## 📄 License
-This project is developed for educational and research purposes.
+MIT License. Free to use and modify for any purpose.

@@ -61,3 +61,11 @@ htmlcov/
 
 # Docker
 .dockerignore
+
+# Non-core project files (Docs, Thesis, Notebooks)
+docs/
+notebooks/
+
+# Ignore actual PDF files but keep the directory structure
+knowledge_base/raw/*.pdf
+!knowledge_base/raw/.gitkeep

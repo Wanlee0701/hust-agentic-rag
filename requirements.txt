@@ -40,3 +40,4 @@ langdetect
 
 # Monitoring & Logging
 python-json-logger
+torchvision
