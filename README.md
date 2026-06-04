@@ -25,7 +25,7 @@ Docker is the recommended way to deploy this framework, ensuring perfectly isola
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/your-username/agentic-rag-framework.git
+git clone https://github.com/Wanlee0701/hust-agentic-rag
 cd agentic-rag-framework
 ```
 
