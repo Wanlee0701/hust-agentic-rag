@@ -30,6 +30,19 @@ Before you clone and run this repository, ensure your system meets the following
 - **Ollama:** Installed locally or via Docker. Used to serve the open-source LLMs (e.g., Mistral, Llama 3, Gemma).
 ---
 
+## 📋 Prerequisites & System Requirements
+
+Before you clone and run this repository, ensure your system meets the following requirements:
+
+- **Operating System:** Windows 10/11, macOS, or Linux
+- **Hardware:** Minimum 8GB RAM (16GB+ highly recommended for running local LLMs smoothly).
+- **Git:** Installed on your system to clone the repository.
+- **Docker & Docker Compose** *(Recommended)*: If using the Docker deployment method, ensure Docker Desktop (or Docker Engine) is installed and running.
+- **Python 3.10+** *(Alternative)*: Only required if you choose the Manual Installation method.
+- **Ollama:** Installed locally or via Docker. Used to serve the open-source LLMs (e.g., Mistral, Llama 3, Gemma).
+
+---
+
 ## 🛠️ Quick Start (Docker Deployment)
 
 Docker is the recommended way to deploy this framework, ensuring perfectly isolated environments.
