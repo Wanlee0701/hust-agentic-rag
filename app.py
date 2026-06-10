@@ -5,18 +5,48 @@ Kết nối đầy đủ với StudentRegulationAgent
 import os
 import sys
 import io
+import uuid
 import logging
 from pathlib import Path
 
 import streamlit as st
+from dotenv import load_dotenv
 
-# Fix encoding Windows
+# Load biến môi trường từ file .env
+load_dotenv()
+
+# Fix encoding Windows - BOTH stdout and stderr
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
+# Đảm bảo thư mục logs tồn tại
+log_dir = Path("logs")
+log_dir.mkdir(parents=True, exist_ok=True)
+
+# Setup logging với UTF-8 encoding đầy đủ
+_formatter = logging.Formatter(
+    fmt="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
+# File handler with UTF-8
+_file_handler = logging.FileHandler(
+    log_dir / "chatbot.log",
+    encoding="utf-8",
+    errors="replace"
+)
+_file_handler.setFormatter(_formatter)
+
+# Console handler with UTF-8
+_console_handler = logging.StreamHandler(sys.stdout)
+_console_handler.setFormatter(_formatter)
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[_file_handler, _console_handler],
+    force=True  # Override any existing config
 )
 logger = logging.getLogger(__name__)
 
@@ -35,6 +65,18 @@ def check_ollama_status() -> tuple[bool, list[str]]:
     except Exception:
         pass
     return False, []
+
+
+def get_active_llm_provider() -> tuple[str, str]:
+    """Lấy thông tin LLM provider đang cấu hình từ config.yaml"""
+    import yaml
+    try:
+        with open("./config.yaml", "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        llm = cfg.get("llm", {})
+        return llm.get("provider", "ollama"), llm.get("model_name", "N/A")
+    except Exception:
+        return "ollama", "N/A"
 
 
 # ------------------------------------------------------------------ #
@@ -165,25 +207,31 @@ def main():
         st.session_state.agent = None
     if "agent_error" not in st.session_state:
         st.session_state.agent_error = None
+    # [v3] Session ID cho ConversationMemory
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())
 
     # ---- Sidebar -------------------------------------------------
     with st.sidebar:
-        st.markdown("## 🎓 HUST Chatbot")
-        st.markdown("*Trợ lý AI về Quy chế Sinh viên*")
+        show_reasoning = st.checkbox("🔍 Hiển thị quá trình suy luận", value=True)
+        show_sources = st.checkbox("📚 Hiển thị nguồn tài liệu", value=True)
+        show_chunks = st.checkbox("📜 Hiển thị văn bản gốc (Raw Chunks)", value=False)
+
         st.divider()
 
-        # Ollama Status
-        ollama_ok, models = check_ollama_status()
-        has_mistral = any("mistral" in m.lower() for m in models)
-        if ollama_ok and has_mistral:
-            st.markdown('<span class="status-online">● Ollama Online</span>', unsafe_allow_html=True)
-            st.caption(f"Model: {', '.join(m for m in models if 'mistral' in m.lower())}")
-        elif ollama_ok:
-            st.markdown('<span class="status-offline">● Ollama: thiếu Mistral</span>', unsafe_allow_html=True)
-            st.caption("Chạy: `ollama pull mistral`")
+        # --- LLM Provider Status ---
+        provider, model_name = get_active_llm_provider()
+        st.markdown("### 🤖 LLM Engine")
+        if provider == "gemini":
+            st.markdown('<span class="status-online">● Gemini API</span>', unsafe_allow_html=True)
         else:
-            st.markdown('<span class="status-offline">● Ollama Offline</span>', unsafe_allow_html=True)
-            st.caption("Chạy: `ollama serve`")
+            ollama_ok, models = check_ollama_status()
+            if ollama_ok:
+                st.markdown('<span class="status-online">● Ollama Online</span>', unsafe_allow_html=True)
+            else:
+                st.markdown('<span class="status-offline">● Ollama Offline</span>', unsafe_allow_html=True)
+                st.caption("Để chạy Ollama: `ollama serve`")
+        st.caption(f"Model: `{model_name}`")
 
         st.divider()
 
@@ -194,8 +242,21 @@ def main():
             st.session_state.agent_error = None
             st.rerun()
 
-        show_reasoning = st.checkbox("🔍 Hiển thị quá trình suy luận", value=True)
-        show_sources = st.checkbox("📚 Hiển thị nguồn tài liệu", value=True)
+        st.divider()
+
+        # [v3] Nút Reset phiên chat (xóa memory + lịch sử)
+        st.markdown("### 💡 Phên làm việc")
+        sid_short = st.session_state.session_id[:8]
+        st.caption(f"Session ID: `{sid_short}...`")
+        if st.button("🗑️ Phên chat mới", use_container_width=True, type="secondary"):
+            # Xóa memory trong agent
+            agent = st.session_state.get("agent")
+            if agent and hasattr(agent, "memory") and agent.memory:
+                agent.memory.reset(st.session_state.session_id)
+            # Sinh session_id mới + xóa lịch sử UI
+            st.session_state.session_id = str(uuid.uuid4())
+            st.session_state.messages = []
+            st.rerun()
 
         st.divider()
 
@@ -277,7 +338,15 @@ def main():
         if role == "user":
             st.markdown(f'<div class="chat-user">👤 {content}</div>', unsafe_allow_html=True)
         else:
-            st.markdown(f'<div class="chat-bot">🤖 {content}</div>', unsafe_allow_html=True)
+            # [MỚI] Phân biệt Clarification và câu trả lời bình thường
+            if meta.get("needs_clarification"):
+                st.markdown(
+                    f'<div class="chat-bot" style="border-left: 3px solid #f59e0b;">'  
+                    f'❓ <strong>Cần thêm thông tin:</strong><br>{content}</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(f'<div class="chat-bot">🤖 {content}</div>', unsafe_allow_html=True)
 
             # Confidence
             conf = meta.get("confidence", 0)
@@ -295,6 +364,22 @@ def main():
                 src_html = " ".join(f'<span class="source-tag">📄 {s}</span>' for s in sources)
                 st.markdown(f"**Nguồn:** {src_html}", unsafe_allow_html=True)
 
+            # Raw Chunks
+            chunks = meta.get("retrieved_chunks", [])
+            if show_chunks and chunks:
+                with st.expander(f"📜 Xem {len(chunks)} đoạn văn bản gốc được trích xuất", expanded=False):
+                    for chunk in chunks:
+                        score_pct = f"{chunk['score']:.1%}" if isinstance(chunk.get('score'), float) else "N/A"
+                        st.markdown(
+                            f"**📄 Nguồn #{chunk['index']}: `{chunk['source']}`** — Độ khớp: `{score_pct}`"
+                        )
+                        if chunk.get("chapter"):
+                            st.caption(f"Chương: {chunk['chapter']}")
+                        if chunk.get("article"):
+                            st.caption(f"Điều: {chunk['article']}")
+                        st.code(chunk["content"], language="")
+                        st.divider()
+
             # Reasoning steps
             steps = meta.get("steps", [])
             if show_reasoning and steps:
@@ -303,7 +388,7 @@ def main():
                         st.markdown(
                             f"**[Bước {step['iteration']}] {step['action']}**  \n"
                             f"*Suy nghĩ:* {step['thought']}  \n"
-                            f"*Quan sát:* {step['observation'][:200]}"
+                            f"*Quan sát:* {step['observation'][:300]}"
                         )
                         st.divider()
 
@@ -335,14 +420,26 @@ def main():
         st.session_state.messages.append({"role": "user", "content": question})
 
         # Gọi agent
-        with st.spinner("🤖 Đang phân tích và tìm kiếm..."):
+        # Gọi agent
+        with st.status("🤖 Khởi động Agent...", expanded=True) as status:
+            def update_status(msg):
+                status.update(label=msg)
+                st.write(f"⏳ {msg}")
+                
             try:
-                result = agent.answer_question(question)
+                result = agent.answer_question(
+                    question,
+                    session_id=st.session_state.session_id,
+                    status_callback=update_status,
+                )
+                status.update(label="✅ Hoàn tất quá trình suy luận!", state="complete", expanded=False)
 
                 answer = result.get("answer", "Không có câu trả lời")
                 confidence = result.get("confidence", 0.0)
                 success = result.get("success", False)
+                needs_clarification = result.get("needs_clarification", False)
                 state = result.get("state")
+                retrieved_chunks = result.get("retrieved_chunks", [])
 
                 sources = state.sources if state else []
                 steps = []
@@ -365,11 +462,17 @@ def main():
                         "success": success,
                         "sources": sources,
                         "steps": steps,
+                        "retrieved_chunks": retrieved_chunks,
+                        "needs_clarification": needs_clarification,
+                        "intent_name": result.get("intent_name", ""),
+                        "entities": result.get("entities", {}),
                     },
                 })
 
+
             except Exception as e:
                 logger.error(f"Agent error: {e}")
+                status.update(label="❌ Lỗi trong quá trình xử lý", state="error", expanded=True)
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": f"❌ Lỗi hệ thống: {str(e)}. Vui lòng thử lại.",

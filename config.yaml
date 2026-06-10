@@ -84,21 +84,73 @@ pdf_processing:
       applicable_students: "All"
       status: "active"
   
-  # Regex patterns để xóa khỏi PDF
+  # Regex patterns để xóa khỏi PDF (áp dụng cho từng DÒNG, re.IGNORECASE)
+  # Ghi chú: dùng re.search() — match bất kỳ vị trí trong dòng, trừ khi có ^ hoặc $
   text_cleanup_patterns:
-    - "^\\d+\\s*$"                                    # Số trang
+
+    # ── 1. SỐ TRANG ĐỨC LẺ ──────────────────────────────────────────────────
+    - "^\\d+\\s*$"                    # Dòng chỉ có 1-2 chữ số (số trang: 2, 3, 4...)
+
+    # ── 2. HEADER QUỐC GIA / TRƯỜNG ─────────────────────────────────────────
     - "BỘ GIÁO DỤC VÀ ĐÀO TẠO"
     - "ĐẠI HỌC BÁCH KHOA HÀ NỘI"
     - "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM"
-    - "Độc lập - Tự do - Hạnh phúc"
-    - "Ban hành kèm theo Quyết định số.*"
-    - "HÀ NỘI,.*"
-    - "Số:"
-    - "Căn cứ"
-    - "PGS."
-    - "KT."
-    - "PHÓ GIÁM ĐỐC"
-    - "Nơi nhận:"
+    - "Độc lập\\s*[–-]\\s*Tự do\\s*[–-]\\s*Hạnh phúc"  # có thể là – hoặc -
+
+    # ── 3. DÒNG SỐ VĂN BẢN / NGÀY THÁNG ────────────────────────────────────
+    - "^Số:\\s*/QĐ"                   # "Số: /QĐ-ĐHBK Hà Nội, ngày..."
+    - "Hà Nội,\\s*ngày\\s*tháng\\s*năm"  # Mẫu ngày tháng bỏ trống
+    - "\\(Kèm theo Quyết định số.*\\)"   # Dòng "(Kèm theo QĐ số: /QĐ-ĐHBK ngày...)"
+
+    # ── 4. KHỐI "CĂN CỨ" (toàn bộ, kể cả dòng continuation) ────────────────
+    - "^Căn cứ"                       # Dòng bắt đầu "Căn cứ Luật/Nghị định/Quy chế..."
+    - "^việc Quy định"                # Dòng tiếp nối của "Căn cứ NĐ..." 
+    - "^số điều của Luật"             # Tiếp nối: "số điều của Luật Giáo dục..."
+    - "^điều của Luật Giáo dục"       # Tiếp nối tương tự
+    - "^học ban hành theo Nghị quyết" # Tiếp nối "Căn cứ Quy chế...do HĐ đại học ban hành..."
+    - "^ban hành theo Nghị quyết"     # Biến thể khác
+    - "^dịch vụ trong lĩnh vực giáo dục"  # Tiếp nối Căn cứ NĐ 238
+    - "^học phí các chương trình đào tạo đại học chính quy"  # Tiếp nối Tờ trình
+    - "^học và sau đại học đối với năm học"  # Tiếp nối
+    - "^Theo đề nghị của ông Trưởng Ban Đào tạo"
+
+    # ── 5. TIÊU ĐỀ / THỦ TỤC QUYẾT ĐỊNH ────────────────────────────────────
+    - "^QUYẾT ĐỊNH:?\\s*$"            # Dòng "QUYẾT ĐỊNH" hoặc "QUYẾT ĐỊNH:"
+    - "^Về việc phê duyệt mức học phí" # Tiêu đề QĐ
+    - "^đào tạo kỹ sư chuyên sâu, vừa làm vừa học"  # Tiếp nối tiêu đề
+    - "^đối với năm học \\d{4}-\\d{4}\\s*$"  # "đối với năm học 2025-2026"
+    - "^GIÁM ĐỐC ĐẠI HỌC BÁCH KHOA HÀ NỘI\\s*$"  # Chức danh ký tên
+
+    # # ── 6. ĐIỀU THI HÀNH (Điều 1, Điều 2) ──────────────────────────────────
+    # - "^Điều \\d+\\."                 # "Điều 1.", "Điều 2." — điều thi hành/hiệu lực
+    # - "^chuyên sâu, vừa làm vừa học và sau đại học đối với"  # Tiếp nối Điều 1
+    # - "^Tài chính-Kế hoạch, Công tác sinh viên"  # Tiếp nối Điều 2 (danh sách)
+    # - "^đại học hệ chính quy, kỹ sư chuyên sâu"  # Tiếp nối Điều 2
+    # - "^nhân liên quan chịu trách nhiệm thi hành"
+    # - "^ký học ở mỗi học kỳ\\. Số TCHP"          # Câu thủ tục tính TCHP trong Điều 1
+    # - "^định tại Phụ lục II kèm theo\\.\\s*$"     # Continuation dòng cuối Điều 1
+    # - "^Học phí được tính theo số tín chỉ học phí \\(TCHP\\) của"  # Intro Điều 1
+
+    # ── 7. KÝ TÊN / CHỮ KÝ ─────────────────────────────────────────────────
+    - "^GIÁM ĐỐC\\s*$"               # Chức danh đứng riêng
+    - "PGS\\.TS\\."                   # "PGS.TS. Huỳnh Quyết Thắng"
+    - "^PGS\\."
+    - "^KT\\."
+    - "^PHÓ GIÁM ĐỐC"
+
+    # ── 8. NƠI NHẬN / PHÂN PHỐI ─────────────────────────────────────────────
+    - "^Nơi nhận:"
+    - "^- Như Điều \\d+;"             # "- Như Điều 2;"
+    - "^- Lưu:\\s*VT"                 # "- Lưu: VT, ĐT."
+
+    # ── 9. TIÊU ĐỀ PHỤ LỤC (boilerplate, không có nội dung thực) ────────────
+    - "^Phụ lục [IVX]+"               # "Phụ lục I", "Phụ lục II"
+    - "^MỨC HỌC PHÍ CÁC CHƯƠNG TRÌNH ĐÀO TẠO"  # Tiêu đề Phụ lục I
+    - "^CHUYÊN SÂU, VỪA LÀM VỪA HỌC VÀ\\s*$"
+    - "^SAU ĐẠI HỌC ĐỐI VỚI NĂM HỌC"
+    - "^QUY ĐỔI TÍN CHỈ HỌC TẬP"    # Tiêu đề Phụ lục II
+    - "^ở mỗi học kỳ\\. Số TCHP của mỗi học phần"  # Intro bảng quy đổi Phụ lục II
+    - "^và số tín chỉ học tập \\(TCHT\\), cụ thể như sau"  # Continuation intro bảng quy đổi
 
 # ============================================================================
 # CHUNKING - Tách documents thành chunks
@@ -176,15 +228,26 @@ retrieval:
   keyword_weight: 0.4
 
 # ============================================================================
-# LLM - Language Model (Ollama)
+# LLM - Language Model
+# Đổi 'provider' để chọn backend:
+#   - 'ollama' : dùng model cục bộ qua Ollama
+#   - 'gemini' : dùng Google Gemini qua API Key
 # ============================================================================
 llm:
-  provider: "ollama"
-  model_name: "gemma-4-E4B"
-  base_url: "http://localhost:11434"
+  # provider: "ollama"            # <-- Đổi thành 'gemini' để dùng Gemini
+  # model_name: "gemma_nothink"
+  provider: "gemini"
+  model_name: "gemini-2.5-flash"   # Ollama: tên model; Gemini: e.g. 'gemini-1.5-flash'
+  base_url: "http://localhost:11434"  # Chỉ dùng khi provider=ollama
   temperature: 0.3
-  max_tokens: 1024
-  timeout_seconds: 30
+  max_tokens: 2048
+  timeout_seconds: 120
+
+  # --- Cấu hình riêng cho Google Gemini ---
+  # Bước 1: Tạo API key tại https://aistudio.google.com/app/apikey
+  # Bước 2: Đặt vào file .env: GEMINI_API_KEY=your_key_here
+  # Bước 3: Đổi provider thành 'gemini' và model_name thành 'gemini-1.5-flash'
+  api_key_env: "GEMINI_API_KEY"  # Tên biến môi trường chứa API key
 
 # ============================================================================
 # AGENT - Agentic RAG
@@ -192,7 +255,11 @@ llm:
 agent:
   type: "react"
   max_iterations: 5
-  confidence_threshold: 0.75
+  # Ngưỡng confidence để trả lời bình thường (≥ high → OK, < low → từ chối)
+  high_confidence_threshold: 0.65   # ≥ 65%: trả lời bình thường
+  low_confidence_threshold: 0.35    # < 35%: từ chối, trả về "không tìm thấy"
+  # Ngưỡng avg similarity của docs để quyết định có cần rewrite query không
+  min_avg_similarity: 0.45          # avg sim ≥ 45% → docs tốt, không cần rewrite
 
 # ============================================================================
 # LOGGING - Log settings
@@ -219,3 +286,75 @@ api:
   enabled: false
   port: 8000
   host: "0.0.0.0"
+
+# ============================================================================
+# INTENTS — Định nghĩa các nhóm câu hỏi và entity yêu cầu
+# Đây là "Ground Truth" cho logic rẽ nhánh của IntentClassifier.
+# requires_entities: false → pass thẳng vào RAG
+# requires_entities: true  → phải có đủ required_fields, nếu không → clarification
+# ============================================================================
+intents:
+  GENERAL_REGULATION:
+    description: "Quy chế, quy định chung không phụ thuộc ngành/khóa cụ thể"
+    requires_entities: false
+    required_fields: []
+    clarification_template: ""
+    examples:
+      - "GPA bao nhiêu thì bị cảnh cáo học vụ?"
+      - "Sinh viên bị trượt bao nhiêu tín thì buộc thôi học?"
+      - "Điều kiện để bảo lưu kết quả học tập?"
+      - "Học bổng KKHT là gì?"
+
+  ACADEMIC_DISCIPLINE:
+    description: "Xử lý học vụ, cảnh cáo, buộc thôi học, kỷ luật"
+    requires_entities: false
+    required_fields: []
+    clarification_template: ""
+    examples:
+      - "Sinh viên bị trượt 14 tín thì cảnh cáo mức mấy?"
+      - "Khi nào bị buộc thôi học?"
+      - "Điểm TBCTL thấp hơn bao nhiêu thì bị cảnh cáo?"
+
+  SCHOLARSHIP:
+    description: "Điều kiện, mức, quy trình xét học bổng Trần Đại Nghĩa và KKHT"
+    requires_entities: false
+    required_fields: []
+    clarification_template: ""
+    examples:
+      - "Điều kiện nhận học bổng Trần Đại Nghĩa?"
+      - "Học bổng KKHT mức 1 là bao nhiêu tiền?"
+      - "Quy trình xét học bổng như thế nào?"
+
+  LANGUAGE_REQUIREMENT:
+    description: "Yêu cầu ngoại ngữ đầu vào, chuẩn đầu ra theo ngành và khóa"
+    requires_entities: true
+    required_fields:
+      - nganh_hoc   # Ví dụ: "CNTT", "Cơ điện tử", "Toán - Tin"
+      - khoa_hoc    # Ví dụ: "K65", "K68", "K70"
+    clarification_template: "Để tra cứu yêu cầu ngoại ngữ chính xác, bạn vui lòng cho biết:\n- Ngành học của bạn là gì? (ví dụ: CNTT, Cơ điện tử, Toán - Tin...)\n- Bạn thuộc khóa nào? (ví dụ: K65, K68, K70...)"
+    examples:
+      - "Yêu cầu tiếng Anh ngành CNTT K65 là gì?"
+      - "Chuẩn đầu ra ngoại ngữ của Cơ điện tử K68?"
+      - "Tôi học Toán - Tin K70, cần TOEIC bao nhiêu?"
+
+  TUITION_FEE:
+    description: "Học phí, miễn giảm học phí, quy định đóng học phí"
+    requires_entities: true
+    required_fields:
+      - nganh_hoc
+      - khoa_hoc
+    clarification_template: "Để tra cứu học phí chính xác, bạn vui lòng cho biết:\n- Ngành học của bạn là gì? (ví dụ: CNTT, Cơ khí, Điện tử...)\n- Bạn thuộc khóa nào? (ví dụ: K65, K68, K70...)"
+    examples:
+      - "Học phí ngành CNTT K65 một học kỳ là bao nhiêu?"
+      - "Học phí chương trình tiên tiến K68?"
+
+# ============================================================================
+# MEMORY — Cấu hình bộ nhớ hội thoại
+# strategy: sliding_window — giữ K cặp Q&A gần nhất
+# ============================================================================
+memory:
+  enabled: true
+  strategy: "sliding_window"   # sliding_window (hiện tại) | summary_buffer (tương lai)
+  window_size: 5               # Số cặp Q&A tối đa giữ lại
+  max_context_chars: 1500      # Giới hạn ký tự context inject vào prompt
+

@@ -1,12 +1,14 @@
 # Core LLM & Framework
 langchain
 langchain_ollama
+langchain-google-genai
 langchain_classic
 langchain_text_splitters
 langchain_core
 langchain_chroma
 langchain_huggingface
 langgraph
+
 # Frontend
 streamlit
 
@@ -27,6 +29,7 @@ requests
 # API (Optional)
 fastapi
 uvicorn
+
 # Testing
 pytest
 pytest-cov
@@ -35,6 +38,7 @@ pytest-cov
 pandas
 numpy
 tabulate
+
 # Language Detection
 langdetect
 
