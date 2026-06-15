@@ -6,9 +6,13 @@ import json
 import logging
 import yaml
 import os
+import sys
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
+
+# Fix module path so 'src' can be imported when running from any directory
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from src.embeddings import (
     EmbeddingModelManager,
@@ -234,10 +238,55 @@ class DataPreparationPipelineRefactored:
                 logger.info(f"   Content: {doc.page_content[:150]}...\n")
         else:
             logger.warning("⚠️  No results found")
-    
+
+    def step_5_discover_schema(self, config_path: str = "./config.yaml") -> bool:
+        """
+        BƯỚC 5: [v5 — Auto-Discovery] Phân tích tài liệu và sinh university_schema.yaml.
+
+        Dùng LLM để:
+        - Phân tích từng tài liệu JSON trong data/
+        - Tự động xác định dimensions (ngành, khóa, v.v.)
+        - Sinh ra university_schema.yaml cho IntentClassifier
+
+        Args:
+            config_path: Đường dẫn config.yaml
+
+        Returns:
+            True nếu thành công, False nếu lỗi.
+        """
+        logger.info("\n" + "=" * 80)
+        logger.info("🔍 STEP 5: AUTO-DISCOVER INTENT SCHEMA")
+        logger.info("=" * 80)
+
+        try:
+            from scripts.discover_schema import SchemaDiscoveryEngine, build_llm_invoker
+
+            # Tái sử dụng LLM đã khởi tạo (tránh khởi tạo lại)
+            llm_invoker = build_llm_invoker(self.config)
+
+            engine = SchemaDiscoveryEngine(
+                config=self.config,
+                llm_invoker=llm_invoker,
+                data_dir=self.output_path,
+            )
+            output_path = engine.discover()
+            logger.info(f"\n✅ Schema đã được sinh tại: {output_path}")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Lỗi khi discover schema: {e}")
+            import traceback
+            traceback.print_exc()
+            logger.warning(
+                "⚠️  Bỏ qua bước discover schema. "
+                "Hệ thống sẽ fallback về intents trong config.yaml. "
+                "Bạn có thể chạy thủ công: python scripts/discover_schema.py"
+            )
+            return False
+
     def run_full_pipeline(self, config_path: str = "./config.yaml") -> None:
         """
-        Chạy toàn bộ pipeline 4 bước
+        Chạy toàn bộ pipeline 5 bước
         
         Args:
             config_path: Đường dẫn tới config.yaml
@@ -255,6 +304,9 @@ class DataPreparationPipelineRefactored:
             
             # Bước 4: Test retrieval
             self.step_4_test_retrieval()
+
+            # Bước 5: [v5] Auto-Discover Intent Schema
+            schema_ok = self.step_5_discover_schema(config_path)
             
             # Summary
             logger.info("\n" + "🎉" * 40)
@@ -263,6 +315,7 @@ class DataPreparationPipelineRefactored:
             logger.info(f"   ✓ PDFs processed: {pdf_count}")
             logger.info(f"   ✓ Total chunks: {chunk_count}")
             logger.info(f"   ✓ Vector DB initialized: YES")
+            logger.info(f"   ✓ Intent Schema discovered: {'YES ✅' if schema_ok else 'SKIPPED ⚠️ (fallback to config.yaml)'}")
             logger.info("🎉" * 40)
             
         except Exception as e:
@@ -279,7 +332,7 @@ if __name__ == "__main__":
     # Khởi tạo pipeline
     pipeline = DataPreparationPipelineRefactored(config_path="./config.yaml")
     
-    # Chạy toàn bộ pipeline
+    # Chạy toàn bộ pipeline (bao gồm cả schema discovery)
     pipeline.run_full_pipeline(config_path="./config.yaml")
     
     # Hoặc chạy từng bước riêng lẻ:
@@ -288,3 +341,4 @@ if __name__ == "__main__":
     # chunks = TextChunker.chunk_all_documents(Path("./data"))
     # pipeline.step_3_store_in_vectordb(chunks)
     # pipeline.step_4_test_retrieval(query="Tiêu chí xét duyệt học bổng")
+    # pipeline.step_5_discover_schema()  # [v5] Sinh schema tự động

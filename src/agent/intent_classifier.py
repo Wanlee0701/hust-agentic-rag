@@ -1,13 +1,19 @@
 """
 intent_classifier.py — Hybrid Intent Classification & Routing
-Kết hợp: LLM (bóc tách ngữ nghĩa) + YAML config (kiểm tra business logic).
+Kết hợp: LLM (bóc tách ngữ nghĩa) + Schema (kiểm tra business logic).
 
 Luồng:
   1. LLM đọc câu hỏi + memory context → trả về JSON {intent, entities}
-  2. So sánh entities bóc tách được với requires_fields trong YAML
+  2. So sánh entities bóc tách được với requires_fields trong Schema
   3. Bổ sung entity từ memory nếu còn thiếu
   4. Nếu vẫn thiếu → needs_clarification = True + sinh câu hỏi làm rõ
   5. Nếu đủ → pass vào RAG
+
+[v5 — Auto-Discovery]
+  - Entity list (nganh_hoc, khoa_hoc...) không còn hardcode trong prompt.
+  - Được inject động từ university_schema.yaml qua SchemaLoader.
+  - Clarification prompts cũng lấy từ schema, không còn dict cứng trong code.
+  - Hệ thống có thể tái sử dụng cho bất kỳ trường đại học nào.
 """
 from __future__ import annotations
 
@@ -52,27 +58,29 @@ class IntentResult:
 # --------------------------------------------------------------------------- #
 
 _INTENT_EXTRACTION_PROMPT = """\
-Bạn là bộ phân loại câu hỏi của hệ thống chatbot quy chế đào tạo ĐHBK Hà Nội.
+Bạn là bộ phân loại câu hỏi của hệ thống chatbot tư vấn quy chế đào tạo đại học.
 
 ## Danh sách Intent hợp lệ:
 {intent_list}
 
+## Các loại thông tin (entity) cần bóc tách:
+{entity_list}
+
 ## Lịch sử hội thoại gần đây (có thể trống):
 {memory_context}
 
-## Câu hỏi hiện tại của sinh viên:
+## Câu hỏi hiện tại:
 "{question}"
 
 ## Nhiệm vụ:
 1. Xác định intent phù hợp nhất từ danh sách trên.
-2. Bóc tách các entity có trong câu hỏi HOẶC được nhắc tới trong lịch sử hội thoại:
-   - nganh_hoc: tên ngành (ví dụ: "CNTT", "Cơ điện tử", "Toán - Tin", "Điện tử viễn thông")
-   - khoa_hoc: khóa học (ví dụ: "K65", "K66", "K68", "K70")
-   - gpa: điểm GPA nếu có (ví dụ: 3.2)
-3. Nếu entity không có trong câu hỏi lẫn lịch sử → để null.
+2. Bóc tách các entity có trong câu hỏi HOẶC được nhắc tới trong lịch sử hội thoại.
+   - Chỉ lấy entity từ danh sách entity ở trên.
+   - Entity không có trong câu hỏi lẫn lịch sử → để null.
+3. Trả về confidence (0.0-1.0) cho quyết định intent.
 
 Trả về JSON duy nhất (KHÔNG giải thích thêm):
-{{"intent": "INTENT_NAME", "entities": {{"nganh_hoc": null, "khoa_hoc": null, "gpa": null}}, "confidence": 0.0}}"""
+{{"intent": "INTENT_NAME", "entities": {{{entity_json_template}}}, "confidence": 0.0}}"""
 
 
 # --------------------------------------------------------------------------- #
@@ -92,18 +100,26 @@ class IntentClassifier:
         self,
         intent_config: Dict[str, Any],
         llm_invoker: Callable[[str], str],
+        domain_entities: Optional[Dict[str, Any]] = None,
     ):
         """
         Args:
-            intent_config: Dict từ config.yaml['intents']
-            llm_invoker: Hàm gọi LLM, nhận prompt str → trả về str
+            intent_config: Dict intent schema (từ university_schema.yaml hoặc config.yaml['intents']).
+            llm_invoker: Hàm gọi LLM, nhận prompt str → trả về str.
+            domain_entities: Dict entity schema từ university_schema.yaml['domain_entities'].
+                             Nếu None → fallback về entity list mặc định (nganh_hoc, khoa_hoc, gpa).
         """
         self.intent_config = intent_config
         self._llm = llm_invoker
         self._intent_names = list(intent_config.keys())
+        # [v5] Domain entities từ schema — nếu không có thì dùng default
+        self._domain_entities: Dict[str, Any] = domain_entities or self._default_entities()
         logger.info(
             f"[IntentClassifier] Loaded {len(self._intent_names)} intents: "
             f"{self._intent_names}"
+        )
+        logger.info(
+            f"[IntentClassifier] Domain entities: {list(self._domain_entities.keys())}"
         )
 
     # ----------------------------------------------------------------------- #
@@ -204,8 +220,9 @@ class IntentClassifier:
 
     def _call_llm(self, question: str, memory_context: str, previous_intent: Optional[str] = None) -> Dict[str, Any]:
         """Gọi LLM và parse JSON kết quả. Trả về dict với keys: intent, entities, confidence.
-        
-        [NEW] Nếu previous_intent tồn tại, thêm hint vào prompt để LLM biết context.
+
+        [v5] Entity list được inject động từ domain_entities schema.
+        [v3] Nếu previous_intent tồn tại, thêm hint vào prompt để LLM biết context.
         """
         # Build danh sách intent cho prompt
         intent_list_text = "\n".join(
@@ -213,14 +230,33 @@ class IntentClassifier:
             for name, cfg in self.intent_config.items()
         )
         context_text = memory_context.strip() if memory_context else "(Không có lịch sử)"
-        
-        # [NEW] Thêm hint về previous_intent nếu tồn tại
+
+        # [v5] Build entity list động từ domain_entities schema
+        entity_lines = []
+        for entity_name, entity_cfg in self._domain_entities.items():
+            desc = entity_cfg.get('description', '')
+            examples = entity_cfg.get('examples', [])
+            ex_str = f" (ví dụ: {', '.join(str(e) for e in examples[:3])})" if examples else ""
+            entity_lines.append(f"- {entity_name}: {desc}{ex_str}")
+        entity_list_text = "\n".join(entity_lines) if entity_lines else "- (Không có entity đặc thù)"
+
+        # Build JSON template cho entity output
+        entity_json_template = ", ".join(
+            f'"{name}": null' for name in self._domain_entities.keys()
+        )
+
+        # [v3] Thêm hint về previous_intent nếu tồn tại
         previous_intent_hint = ""
         if previous_intent:
-            previous_intent_hint = f"\n⚠️ LƯU Ý: Trước đó bot hỏi về '{previous_intent}' và cần bổ sung thông tin.\nNếu câu hỏi hiện tại là trả lời để làm rõ, hãy giữ intent='{previous_intent}'."
+            previous_intent_hint = (
+                f"\n⚠️ LƯU Ý: Trước đó bot hỏi về '{previous_intent}' và cần bổ sung thông tin."
+                f"\nNếu câu hỏi hiện tại là trả lời để làm rõ, hãy giữ intent='{previous_intent}'."
+            )
 
         prompt = _INTENT_EXTRACTION_PROMPT.format(
             intent_list=intent_list_text,
+            entity_list=entity_list_text,
+            entity_json_template=entity_json_template,
             memory_context=context_text,
             question=question + previous_intent_hint,
         )
@@ -306,21 +342,55 @@ class IntentClassifier:
         missing_fields: List[str],
     ) -> str:
         """
-        Sinh câu hỏi làm rõ từ clarification_template trong YAML.
-        Nếu không có template → sinh tự động từ missing_fields.
+        Sinh câu hỏi làm rõ:
+          1. Dùng clarification_template từ intent schema nếu có.
+          2. Nếu không → tổng hợp từ clarification_prompt của từng entity trong domain_entities.
+          3. Fallback cuối: sinh tự động từ tên field.
+
+        [v5] Ưu tiên dùng clarification_prompt từ domain_entities schema
+             thay vì dict cứng trong code.
         """
         template = intent_def.get("clarification_template", "").strip()
         if template:
             return template
 
-        # Auto-generate nếu không có template
-        field_labels = {
-            "nganh_hoc": "ngành học (ví dụ: CNTT, Cơ điện tử...)",
-            "khoa_hoc": "khóa học (ví dụ: K65, K68, K70...)",
-            "gpa": "điểm GPA của học kỳ gần nhất",
-        }
-        missing_texts = [
-            field_labels.get(f, f) for f in missing_fields
-        ]
+        # [v5] Lấy clarification_prompt từ domain_entities schema
+        missing_texts = []
+        for field_name in missing_fields:
+            entity_cfg = self._domain_entities.get(field_name, {})
+            clarif_prompt = entity_cfg.get("clarification_prompt", "").strip()
+            if clarif_prompt:
+                missing_texts.append(clarif_prompt)
+            else:
+                # Fallback: dùng description hoặc tên field
+                desc = entity_cfg.get("description", field_name)
+                examples = entity_cfg.get("examples", [])
+                ex_str = f" (ví dụ: {', '.join(str(e) for e in examples[:3])})" if examples else ""
+                missing_texts.append(f"{desc}{ex_str}")
+
         items = "\n".join(f"- {t}" for t in missing_texts)
         return f"Để trả lời chính xác, bạn vui lòng cho biết thêm:\n{items}"
+
+    @staticmethod
+    def _default_entities() -> Dict[str, Any]:
+        """
+        Trả về entity defaults khi không có university_schema.yaml.
+        Dùng làm fallback để không breaking change với hệ thống hiện tại.
+        """
+        return {
+            "nganh_hoc": {
+                "description": "Ngành học của sinh viên",
+                "examples": ["CNTT", "Cơ điện tử", "Toán - Tin"],
+                "clarification_prompt": "Ngành học của bạn là gì? (ví dụ: CNTT, Cơ điện tử...)",
+            },
+            "khoa_hoc": {
+                "description": "Khóa nhập học",
+                "examples": ["K65", "K68", "K70"],
+                "clarification_prompt": "Bạn thuộc khóa nào? (ví dụ: K65, K68, K70...)",
+            },
+            "gpa": {
+                "description": "Điểm GPA tích lũy",
+                "examples": ["3.2", "2.8", "3.5"],
+                "clarification_prompt": "Điểm GPA tích lũy hiện tại của bạn là bao nhiêu?",
+            },
+        }

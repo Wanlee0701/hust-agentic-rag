@@ -19,6 +19,7 @@ from src.agent.state import AgentState
 from src.agent.prompts import REACT_SYSTEM_PROMPT, QUERY_REFINEMENT_PROMPT
 from src.agent.intent_classifier import IntentClassifier
 from src.agent.memory_manager import get_memory
+from src.agent.schema_loader import SchemaLoader
 from src.embeddings.vector_db import VectorDatabaseManager
 
 logger = logging.getLogger(__name__)
@@ -164,13 +165,15 @@ Hãy phát hiện ngôn ngữ của câu hỏi và trả lời bằng ĐÚNG ng�
 
 class StudentRegulationAgent:
     """
-    AgenticRAG v4 — Luồng thống nhất:
-      [Intent Gate] → Retrieve → [Avg-Sim Check / QueryRewrite] → GenerateAnswer → [Confidence Gate]
+    AgenticRAG v5 — Auto-Discovery Schema:
+      [SchemaLoader] → [IntentClassifier (dynamic)] →
+      [Intent Gate] → Retrieve → [Avg-Sim Check / QueryRewrite] →
+      GenerateAnswer → [Confidence Gate]
     """
 
     MAX_RETRIEVAL_HOPS = 2
 
-    # Confidence Gate (đọc từ config, giá trị mặc định dùng khi không có config)
+    # Confidence Gate (dước đọc từ config, giá trị mặc định dùng khi không có config)
     _HIGH_CONF_DEFAULT = 0.65   # ≥ high → trả lời bình thường
     _LOW_CONF_DEFAULT  = 0.35   # < low  → từ chối (không đủ thông tin)
     _MIN_AVG_SIM_DEFAULT = 0.45  # avg similarity để skip rewrite ở hop 1
@@ -182,6 +185,8 @@ class StudentRegulationAgent:
         self.vector_db_manager = None
         self.intent_classifier: Optional[IntentClassifier] = None
         self.memory = None
+        self._schema_loader: Optional[SchemaLoader] = None  # [v5]
+        self._system_prompt: str = REACT_SYSTEM_PROMPT  # [v5] sẽ được cập nhật từ schema
         self._initialize()
 
     # -------------------------------------------------------------- #
@@ -195,13 +200,39 @@ class StudentRegulationAgent:
         return config
 
     def _initialize(self):
-        logger.info("🚀 Initializing StudentRegulationAgent...")
+        logger.info("🚀 Initializing StudentRegulationAgent (v5 — Auto-Discovery Schema)...")
         llm_config = self.config.get("llm", {})
         self.llm, self._provider = _build_llm(llm_config)
         self._initialize_vector_db()
+        self._initialize_schema_loader()   # [v5] trước intent classifier
         self._initialize_intent_classifier()
         self._initialize_memory()
         logger.info("✅ Agent ready.")
+
+    def _initialize_schema_loader(self):
+        """[v5] Khởi tạo SchemaLoader và cập nhật system prompt từ university info."""
+        self._schema_loader = SchemaLoader(self.config)
+        if self._schema_loader.schema_exists():
+            uni_info = self._schema_loader.load_university_info()
+            uni_name = uni_info.get("name", "")
+            doc_list = uni_info.get("source_documents", [])
+            if uni_name or doc_list:
+                # Cập nhật system prompt với thông tin trường từ schema
+                from src.agent.prompts import build_system_prompt
+                self._system_prompt = build_system_prompt(
+                    university_name=uni_name,
+                    document_list=doc_list,
+                )
+                logger.info(
+                    f"[SchemaLoader] ✅ System prompt được cập nhật cho: {uni_name} "
+                    f"({len(doc_list)} documents)"
+                )
+        else:
+            logger.info(
+                "[SchemaLoader] university_schema.yaml chưa tồn tại. "
+                "Dùng REACT_SYSTEM_PROMPT mặc định. "
+                "Chạy 'python scripts/discover_schema.py' để sinh schema."
+            )
 
     def _initialize_vector_db(self):
         from src.embeddings.model import EmbeddingModelManager
@@ -214,15 +245,21 @@ class StudentRegulationAgent:
         logger.info("✅ Vector Database initialized")
 
     def _initialize_intent_classifier(self):
-        """Khởi tạo IntentClassifier với YAML config và LLM invoker."""
-        intent_config = self.config.get("intents", {})
+        """[v5] Khởi tạo IntentClassifier với schema từ SchemaLoader."""
+        if self._schema_loader is None:
+            self._schema_loader = SchemaLoader(self.config)
+
+        intent_config = self._schema_loader.load()
         if not intent_config:
             logger.warning(
-                "[Orchestrator] Không tìm thấy section 'intents' trong config.yaml. "
+                "[Orchestrator] Không tìm thấy intent schema nào. "
                 "IntentClassifier sẽ không hoạt động."
             )
             self.intent_classifier = None
             return
+
+        # [v5] Load domain_entities động từ schema
+        domain_entities = self._schema_loader.load_domain_entities()
 
         def llm_invoker(prompt: str) -> str:
             return _invoke_llm(self.llm, self._provider, prompt)
@@ -230,8 +267,10 @@ class StudentRegulationAgent:
         self.intent_classifier = IntentClassifier(
             intent_config=intent_config,
             llm_invoker=llm_invoker,
+            domain_entities=domain_entities if domain_entities else None,  # None → fallback default
         )
-        logger.info("✅ IntentClassifier initialized")
+        source = "university_schema.yaml" if self._schema_loader.schema_exists() else "config.yaml (fallback)"
+        logger.info(f"✅ IntentClassifier initialized (schema source: {source})")
 
     def _initialize_memory(self):
         """Khởi tạo ConversationMemory từ cấu hình."""
@@ -626,7 +665,7 @@ class StudentRegulationAgent:
 
     def _generate_answer(self, question: str, context: str) -> str:
         prompt = _ANSWER_PROMPT.format(
-            system_prompt=REACT_SYSTEM_PROMPT,
+            system_prompt=self._system_prompt,  # [v5] dùng _system_prompt (có thể được cập nhật từ schema)
             context=context,
             question=question,
         )

@@ -9,6 +9,23 @@ system:
   environment: "development"  # development, production
 
 # ============================================================================
+# SCHEMA — Auto-Discovery Intent Schema (v5)
+# Thay thế intents hardcode bằng schema tự động sinh từ tài liệu.
+# ============================================================================
+schema:
+  # Bật Auto-Discovery: dùng university_schema.yaml nếu tồn tại
+  auto_discovery: true
+
+  # Đường dẫn đến schema file (được sinh bởi scripts/discover_schema.py)
+  schema_path: "./university_schema.yaml"
+
+  # Nếu university_schema.yaml chưa tồn tại → dùng intents trong config.yaml làm fallback
+  fallback_to_config_intents: true
+
+  # Số ký tự sample từ mỗi tài liệu JSON khi phân tích (không đọc toàn bộ để tiết kiệm token)
+  sample_chars_per_doc: 3000
+
+# ============================================================================
 # DATA PATHS - Đường dẫn tới dữ liệu
 # ============================================================================
 data_paths:
