@@ -1,26 +1,37 @@
 """
-Orchestrator - Agent chính thực hiện ReACT pattern (Multi-hop)
-Cải tiến:
-  - Vòng lặp Evaluate → QueryRewrite → Retrieve thực sự
-  - Hỗ trợ Ollama và Google Gemini
-  - Trả về retrieved_chunks để UI hiển thị văn bản gốc
-  - [v3] Hybrid Intent Classification (YAML + LLM)
-  - [v3] Conversation Memory (Sliding Window)
+Orchestrator — Agent chính thực hiện ReACT pattern (Tool-Based).
+
+Refactored v6:
+  - Agent gọi Tools qua BaseTool interface thay vì hardcode logic.
+  - Preprocessing (Intent/Schema) tách ra src/pipeline/.
+  - Memory tách ra src/memory/.
+  - Confidence Gate tách ra src/pipeline/confidence_gate.py.
+
+Luồng:
+  [Pipeline] IntentClassifier → needs_clarification?
+      ↓ NO
+  [Agent] for hop in MAX_HOPS:
+      Tool: RetrieveTool.execute()
+      Tool: EvaluateTool.execute()
+      Tool: RewriteTool.execute() (nếu cần)
+  Tool: GenerateTool.execute()
+      ↓
+  [Pipeline] ConfidenceGate.evaluate()
+  [Memory] save_turn()
 """
-import json
 import logging
 import os
-import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yaml
 
 from src.agent.state import AgentState
-from src.agent.prompts import REACT_SYSTEM_PROMPT, QUERY_REFINEMENT_PROMPT
-from src.agent.intent_classifier import IntentClassifier
-from src.agent.memory_manager import get_memory
-from src.agent.schema_loader import SchemaLoader
-from src.embeddings.vector_db import VectorDatabaseManager
+from src.agent.prompts import REACT_SYSTEM_PROMPT
+from src.agent.tools import RetrieveTool, EvaluateTool, RewriteTool, GenerateTool
+from src.pipeline.intent_classifier import IntentClassifier
+from src.pipeline.schema_loader import SchemaLoader
+from src.pipeline.confidence_gate import ConfidenceGate
+from src.memory.memory_manager import get_memory
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +101,7 @@ def _invoke_llm(llm, provider: str, prompt: str) -> str:
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
+
     response = llm.invoke(prompt)
     # Gemini trả về AIMessage, Ollama trả về str
     if hasattr(response, "content"):
@@ -99,84 +110,22 @@ def _invoke_llm(llm, provider: str, prompt: str) -> str:
 
 
 # ================================================================== #
-#  Prompts nội bộ                                                     #
-# ================================================================== #
-
-# [FIX v2] Đổi tiêu chí: chỉ hỏi "có LIÊN QUAN không?"
-# Không hỏi "đã đủ để trả lời hoàn hảo chưa?" vì LLM sẽ luôn trả false.
-_EVALUATE_PROMPT = """\
-Bạn là trợ lý AI về quy chế đào tạo ĐHBK Hà Nội.
-
-Câu hỏi của sinh viên: "{question}"
-
-Dưới đây là các đoạn tài liệu tìm được:
-{context}
-
-Nhiệm vụ: Đánh giá xem tài liệu trên có ĐỀ CẬP đến chủ đề câu hỏi hay không.
-Lưu ý quan trọng:
-- Tài liệu KHÔNG cần trả lời hoàn chỉnh 100%.
-- Chỉ cần tài liệu có chứa thông tin liên quan đến chủ đề câu hỏi là ĐỦ (relevant=true).
-- Chỉ trả về relevant=false nếu tài liệu hoàn toàn nói về chủ đề khác, không liên quan gì.
-
-Trả về JSON duy nhất (KHÔNG giải thích thêm bên ngoài JSON):
-{{"relevant": true/false, "reason": "Lý do ngắn gọn"}}"""
-
-# _INTENT_CHECK_PROMPT đã được xóa (dead code — thay thế bởi IntentClassifier v3)
-
-_REWRITE_PROMPT = """\
-Bạn là chuyên gia về quy chế đào tạo ĐHBK Hà Nội.
-
-Câu hỏi gốc của sinh viên: "{question}"
-Lý do tìm kiếm chưa đủ: "{reason}"
-
-Hãy viết lại câu hỏi dưới 1 cách diễn đạt khác, dùng thuật ngữ pháp lý/học thuật chính xác hơn để tìm trong văn bản quy chế.
-Chỉ trả về 1 câu duy nhất, KHÔNG giải thích.
-
-Ví dụ:
-- Gốc: "trượt 14 tín" → Viết lại: "cảnh cáo học tập tín chỉ nợ không đạt yêu cầu"
-- Gốc: "bị đuổi học vì học kém" → Viết lại: "xử lý học vụ buộc thôi học do điểm trung bình tích lũy thấp"
-
-Câu viết lại:"""
-
-_ANSWER_PROMPT = """\
-{system_prompt}
-
-Dựa trên các đoạn tài liệu quy chế dưới đây, hãy trả lời câu hỏi.
-Hãy phát hiện ngôn ngữ của câu hỏi và trả lời bằng ĐÚNG ngôn ngữ đó.
-
-=== TÀI LIỆU THAM KHẢO ===
-{context}
-
-=== CÂU HỎI ===
-{question}
-
-=== YÊU CẦU ===
-- Trả lời trực tiếp, rõ ràng, đúng trọng tâm
-- Trích dẫn cụ thể số Điều, Chương, tên văn bản nếu có
-- KHÔNG bịa đặt thông tin ngoài tài liệu
-- Nếu thông tin không đủ, thừa nhận giới hạn
-
-=== CÂU TRẢ LỜI ==="""
-
-
-# ================================================================== #
 #  Agent                                                              #
 # ================================================================== #
 
 class StudentRegulationAgent:
     """
-    AgenticRAG v5 — Auto-Discovery Schema:
-      [SchemaLoader] → [IntentClassifier (dynamic)] →
-      [Intent Gate] → Retrieve → [Avg-Sim Check / QueryRewrite] →
-      GenerateAnswer → [Confidence Gate]
+    AgenticRAG v6 — Tool-Based Orchestrator:
+      [Pipeline] IntentClassifier → [Agent] Tools Loop → [Pipeline] ConfidenceGate
+    
+    Tools:
+      1. RetrieveTool   — Tìm kiếm tài liệu từ ChromaDB
+      2. EvaluateTool   — Đánh giá mức độ liên quan (avg-sim + LLM)
+      3. RewriteTool    — Viết lại câu hỏi khi cần
+      4. GenerateTool   — Tổng hợp câu trả lời từ context
     """
 
     MAX_RETRIEVAL_HOPS = 2
-
-    # Confidence Gate (dước đọc từ config, giá trị mặc định dùng khi không có config)
-    _HIGH_CONF_DEFAULT = 0.65   # ≥ high → trả lời bình thường
-    _LOW_CONF_DEFAULT  = 0.35   # < low  → từ chối (không đủ thông tin)
-    _MIN_AVG_SIM_DEFAULT = 0.45  # avg similarity để skip rewrite ở hop 1
 
     def __init__(self, config_path: str = "./config.yaml"):
         self.config = self._load_config(config_path)
@@ -185,8 +134,10 @@ class StudentRegulationAgent:
         self.vector_db_manager = None
         self.intent_classifier: Optional[IntentClassifier] = None
         self.memory = None
-        self._schema_loader: Optional[SchemaLoader] = None  # [v5]
-        self._system_prompt: str = REACT_SYSTEM_PROMPT  # [v5] sẽ được cập nhật từ schema
+        self.confidence_gate: Optional[ConfidenceGate] = None
+        self._schema_loader: Optional[SchemaLoader] = None
+        self._system_prompt: str = REACT_SYSTEM_PROMPT
+        self._tools: Dict[str, Any] = {}
         self._initialize()
 
     # -------------------------------------------------------------- #
@@ -200,52 +151,98 @@ class StudentRegulationAgent:
         return config
 
     def _initialize(self):
-        logger.info("🚀 Initializing StudentRegulationAgent (v5 — Auto-Discovery Schema)...")
+        logger.info("🚀 Initializing StudentRegulationAgent (v6 — Tool-Based)...")
+
+        # 1. LLM
         llm_config = self.config.get("llm", {})
         self.llm, self._provider = _build_llm(llm_config)
-        self._initialize_vector_db()
-        self._initialize_schema_loader()   # [v5] trước intent classifier
-        self._initialize_intent_classifier()
-        self._initialize_memory()
-        logger.info("✅ Agent ready.")
 
-    def _initialize_schema_loader(self):
-        """[v5] Khởi tạo SchemaLoader và cập nhật system prompt từ university info."""
-        self._schema_loader = SchemaLoader(self.config)
-        if self._schema_loader.schema_exists():
-            uni_info = self._schema_loader.load_university_info()
-            uni_name = uni_info.get("name", "")
-            doc_list = uni_info.get("source_documents", [])
-            if uni_name or doc_list:
-                # Cập nhật system prompt với thông tin trường từ schema
-                from src.agent.prompts import build_system_prompt
-                self._system_prompt = build_system_prompt(
-                    university_name=uni_name,
-                    document_list=doc_list,
-                )
-                logger.info(
-                    f"[SchemaLoader] ✅ System prompt được cập nhật cho: {uni_name} "
-                    f"({len(doc_list)} documents)"
-                )
-        else:
-            logger.info(
-                "[SchemaLoader] university_schema.yaml chưa tồn tại. "
-                "Dùng REACT_SYSTEM_PROMPT mặc định. "
-                "Chạy 'python scripts/discover_schema.py' để sinh schema."
-            )
+        # 2. Vector DB
+        self._initialize_vector_db()
+
+        # 3. Schema Loader → System Prompt
+        self._initialize_schema_loader()
+
+        # 4. Tools — phụ thuộc vào LLM, VectorDB, System Prompt
+        self._register_tools()
+
+        # 5. Intent Classifier
+        self._initialize_intent_classifier()
+
+        # 6. Memory
+        self._initialize_memory()
+
+        # 7. Confidence Gate
+        self._initialize_confidence_gate()
+
+        logger.info(
+            f"✅ Agent ready. Tools: {list(self._tools.keys())}"
+        )
 
     def _initialize_vector_db(self):
         from src.embeddings.model import EmbeddingModelManager
         embedding_manager = EmbeddingModelManager(config_path="./config.yaml")
         embeddings = embedding_manager.get_model()
+        from src.embeddings.vector_db import VectorDatabaseManager
         self.vector_db_manager = VectorDatabaseManager(
             embeddings=embeddings,
             config_path="./config.yaml",
         )
         logger.info("✅ Vector Database initialized")
 
+    def _initialize_schema_loader(self):
+        """Khởi tạo SchemaLoader và cập nhật system prompt từ university info."""
+        self._schema_loader = SchemaLoader(self.config)
+        if self._schema_loader.schema_exists():
+            uni_info = self._schema_loader.load_university_info()
+            uni_name = uni_info.get("name", "")
+            doc_list = uni_info.get("source_documents", [])
+            if uni_name or doc_list:
+                from src.agent.prompts import build_system_prompt
+                self._system_prompt = build_system_prompt(
+                    university_name=uni_name,
+                    document_list=doc_list,
+                )
+                logger.info(
+                    f"[SchemaLoader] ✅ System prompt cập nhật cho: {uni_name} "
+                    f"({len(doc_list)} documents)"
+                )
+        else:
+            logger.info(
+                "[SchemaLoader] university_schema.yaml chưa tồn tại. "
+                "Dùng REACT_SYSTEM_PROMPT mặc định."
+            )
+
+    def _register_tools(self):
+        """Đăng ký tất cả tools cho Agent."""
+        llm_invoker = self._create_llm_invoker()
+
+        self._tools = {
+            "retrieve": RetrieveTool(
+                vector_db_manager=self.vector_db_manager,
+                config=self.config,
+            ),
+            "evaluate": EvaluateTool(),
+            "rewrite": RewriteTool(llm_invoker=llm_invoker),
+            "generate": GenerateTool(
+                llm_invoker=llm_invoker,
+                system_prompt=self._system_prompt,
+            ),
+        }
+        logger.info(f"✅ Tools registered: {list(self._tools.keys())}")
+
+    def _create_llm_invoker(self) -> Callable[[str], str]:
+        """Tạo closure gọi LLM — dùng cho các tools."""
+        llm = self.llm
+        provider = self._provider
+
+        def invoker(prompt: str) -> str:
+            return _invoke_llm(llm, provider, prompt)
+
+        return invoker
+
     def _initialize_intent_classifier(self):
-        """[v5] Khởi tạo IntentClassifier với schema từ SchemaLoader."""
+        """Khởi tạo IntentClassifier với schema từ SchemaLoader."""
         if self._schema_loader is None:
             self._schema_loader = SchemaLoader(self.config)
 
@@ -258,19 +255,18 @@ class StudentRegulationAgent:
             self.intent_classifier = None
             return
 
-        # [v5] Load domain_entities động từ schema
         domain_entities = self._schema_loader.load_domain_entities()
-
-        def llm_invoker(prompt: str) -> str:
-            return _invoke_llm(self.llm, self._provider, prompt)
-
         self.intent_classifier = IntentClassifier(
             intent_config=intent_config,
-            llm_invoker=llm_invoker,
-            domain_entities=domain_entities if domain_entities else None,  # None → fallback default
+            llm_invoker=self._create_llm_invoker(),
+            domain_entities=domain_entities if domain_entities else None,
         )
-        source = "university_schema.yaml" if self._schema_loader.schema_exists() else "config.yaml (fallback)"
-        logger.info(f"✅ IntentClassifier initialized (schema source: {source})")
+        source = (
+            "university_schema.yaml"
+            if self._schema_loader.schema_exists()
+            else "config.yaml (fallback)"
+        )
+        logger.info(f"✅ IntentClassifier initialized (source: {source})")
 
     def _initialize_memory(self):
         """Khởi tạo ConversationMemory từ cấu hình."""
@@ -285,6 +281,17 @@ class StudentRegulationAgent:
         )
         logger.info("✅ ConversationMemory initialized")
 
+    def _initialize_confidence_gate(self):
+        """Khởi tạo ConfidenceGate với thresholds từ config."""
+        agent_config = self.config.get("agent", {})
+        self.confidence_gate = ConfidenceGate(
+            high_threshold=agent_config.get("high_confidence_threshold"),
+            low_threshold=agent_config.get("low_confidence_threshold"),
+        )
+        logger.info(
+            f"✅ ConfidenceGate initialized "
+            f"(high={self.confidence_gate.high}, low={self.confidence_gate.low})"
+        )
 
     # -------------------------------------------------------------- #
     #  Public API                                                     #
@@ -297,8 +304,7 @@ class StudentRegulationAgent:
         status_callback: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, Any]:
         """
-        Trả lời câu hỏi qua vòng lặp ReACT Multi-hop.
-        [v3] Bước 0: Hybrid Intent Classification (YAML + LLM + Memory).
+        Trả lời câu hỏi qua vòng lặp ReACT Multi-hop (Tool-Based).
 
         Args:
             question: Câu hỏi của người dùng.
@@ -317,181 +323,131 @@ class StudentRegulationAgent:
         logger.info(f"📝 Processing (session='{session_id}'): {question}")
 
         # ============================================================
-        # BƯỚC 0: HYBRID INTENT CLASSIFICATION
-        # LLM bóc tách intent + entities, YAML kiểm tra required_fields,
-        # Memory bổ sung entity từ lịch sử hội thoại.
+        # BƯỚC 0: INTENT GATE (Preprocessing — src/pipeline/)
         # ============================================================
         notify("🔎 Đang phân loại câu hỏi...")
+        intent_result = self._run_intent_gate(question, session_id)
 
-        intent_result = None
-        if self.intent_classifier:
-            # Lấy ngữ cảnh và entity từ memory
-            memory_context = self.memory.get_context(session_id) if self.memory else ""
-            memory_entities = self.memory.get_entities_from_memory(session_id) if self.memory else {}
-            
-            # [NEW] Lấy previous_intent nếu turn trước cần clarification
-            previous_intent = None
-            if self.memory:
-                previous_intent = self.memory.get_last_clarification_intent(session_id)
-
-            intent_result = self.intent_classifier.classify(
-                question=question,
-                memory_context=memory_context,
-                memory_entities=memory_entities,
-                previous_intent=previous_intent,  # ← Pass hint
+        if intent_result and intent_result.needs_clarification:
+            logger.info(
+                f"❓ Intent='{intent_result.intent_name}' | "
+                f"Missing: {intent_result.missing_fields}"
+            )
+            state = AgentState(query=question, max_iterations=1)
+            state.add_iteration(
+                thought=f"Intent '{intent_result.intent_name}' cần entity: {intent_result.missing_fields}",
+                action="Clarify",
+                action_input=question,
+                observation=f"Thiếu: {intent_result.missing_fields}",
             )
 
-            if intent_result.needs_clarification:
-                logger.info(
-                    f"❓ Intent='{intent_result.intent_name}' | "
-                    f"Missing: {intent_result.missing_fields} | Clarification triggered."
-                )
-                state = AgentState(query=question, max_iterations=1)
-                state.add_iteration(
-                    thought=f"Intent '{intent_result.intent_name}' cần entity: {intent_result.missing_fields}",
-                    action="Clarify",
-                    action_input=question,
-                    observation=f"Thiếu: {intent_result.missing_fields}",
-                )
-                
-                # [NEW] Lưu clarification state vào memory (thêm turn nhưng với answer = clarification_question)
-                if self.memory:
-                    self.memory.add_turn(
-                        session_id=session_id,
-                        question=question,
-                        answer=intent_result.clarification_question,
-                        entities=intent_result.entities,
-                        intent_name=intent_result.intent_name,
-                        needs_clarification=True,  # ← Flag: turn này cần clarification
-                    )
-                
-                return {
-                    "answer": intent_result.clarification_question,
-                    "confidence": 0.0,
-                    "success": False,
-                    "needs_clarification": True,
-                    "clarification_question": intent_result.clarification_question,
-                    "intent_name": intent_result.intent_name,
-                    "entities": intent_result.entities,
-                    "state": state,
-                    "retrieved_chunks": [],
-                }
-            else:
-                logger.info(
-                    f"✅ Intent='{intent_result.intent_name}' | "
-                    f"Entities={intent_result.entities} | Pass to RAG."
+            # Lưu clarification state vào memory
+            if self.memory:
+                self.memory.add_turn(
+                    session_id=session_id,
+                    question=question,
+                    answer=intent_result.clarification_question,
+                    entities=intent_result.entities,
+                    intent_name=intent_result.intent_name,
+                    needs_clarification=True,
                 )
 
+            return {
+                "answer": intent_result.clarification_question,
+                "confidence": 0.0,
+                "success": False,
+                "needs_clarification": True,
+                "clarification_question": intent_result.clarification_question,
+                "intent_name": intent_result.intent_name,
+                "entities": intent_result.entities,
+                "state": state,
+                "retrieved_chunks": [],
+            }
+        elif intent_result:
+            logger.info(
+                f"✅ Intent='{intent_result.intent_name}' | "
+                f"Entities={intent_result.entities} | Pass to RAG."
+            )
+
+        # ============================================================
+        # BƯỚC 1-N: AGENT REASONING LOOP (gọi Tools)
+        # ============================================================
         agent_config = self.config.get("agent", {})
         max_iter = agent_config.get("max_iterations", 5)
+        min_avg_sim = agent_config.get("min_avg_similarity", 0.45)
+        top_k = self.config.get("retrieval", {}).get("top_k", 3)
+
         state = AgentState(query=question, max_iterations=max_iter)
-
-        # Đọc threshold từ config (hoặc dùng giá trị mặc định)
-        high_conf = agent_config.get("high_confidence_threshold", self._HIGH_CONF_DEFAULT)
-        low_conf  = agent_config.get("low_confidence_threshold",  self._LOW_CONF_DEFAULT)
-        min_avg_sim = agent_config.get("min_avg_similarity", self._MIN_AVG_SIM_DEFAULT)
-
-        retrieval_cfg = self.config.get("retrieval", {})
-        top_k = retrieval_cfg.get("top_k", 3)
-        threshold = retrieval_cfg.get("similarity_threshold", 0.35)
-
         current_query = question
         all_results: List[Tuple] = []
 
         try:
-            # ============================================================
-            # VÒNG LẶP: Retrieve → Evaluate → (QueryRewrite → Retrieve)*
-            # ============================================================
             for hop in range(self.MAX_RETRIEVAL_HOPS):
+                # ── Tool 1: RETRIEVE ──
                 notify(f"🔍 [{hop + 1}/{self.MAX_RETRIEVAL_HOPS}] Đang tìm kiếm: \"{current_query[:60]}\"")
-
-                results = self._retrieve(current_query, top_k, threshold)
-
-                # Nếu quá ít → fallback threshold
-                if len(results) < 2 and threshold > 0.25:
-                    notify(f"⚠️ Chỉ tìm được {len(results)} đoạn, mở rộng phạm vi tìm kiếm...")
-                    results = self._retrieve(current_query, top_k + 2, 0.25)
+                retrieve_result = self._tools["retrieve"].execute(query=current_query)
 
                 state.add_iteration(
                     thought=f"Tìm kiếm lần {hop + 1} với query: '{current_query}'",
-                    action="Retrieve",
+                    action=self._tools["retrieve"].name,
                     action_input=current_query,
-                    observation=f"Tìm được {len(results)} đoạn tài liệu",
+                    observation=retrieve_result.message,
                 )
 
-                # Merge kết quả (dedup theo content)
-                existing_contents = {doc.page_content for doc, _ in all_results}
-                for doc, score in results:
-                    if doc.page_content not in existing_contents:
-                        all_results.append((doc, score))
-                        existing_contents.add(doc.page_content)
+                # Merge kết quả (dedup)
+                all_results = self._merge_results(all_results, retrieve_result.data)
 
                 if not all_results:
                     logger.warning("⚠️ Không tìm thấy tài liệu liên quan.")
                     break
 
-                # ============================================================
-                # [FIX v4 — CRITICAL] AVG-SIMILARITY CHECK
-                # Thay thế logic cũ "hop 1 skip evaluate nếu ≥ 2 docs".
-                # Kiểm tra chất lượng docs bằng avg cosine similarity.
-                # Docs tốt (avg ≥ min_avg_sim) → thoát vòng lặp, generate.
-                # Docs kém → tiếp tục sang Evaluate + QueryRewrite.
-                # ============================================================
-                recent_scores = [score for _, score in results[:top_k] if results]
-                avg_sim = sum(recent_scores) / max(len(recent_scores), 1)
-
-                logger.info(
-                    f"[Hop {hop+1}] Docs: {len(all_results)}, "
-                    f"avg_similarity: {avg_sim:.3f} (ngưỡng: {min_avg_sim:.2f})"
+                # ── Tool 2: EVALUATE ──
+                notify("🧐 Đang đánh giá mức độ liên quan...")
+                eval_result = self._tools["evaluate"].execute(
+                    question=question,
+                    results=all_results,
+                    min_avg_sim=min_avg_sim,
+                    llm_invoker=self._create_llm_invoker(),
+                    top_k=top_k,
                 )
 
-                if avg_sim >= min_avg_sim:
-                    state.add_iteration(
-                        thought=f"Hop {hop+1}: avg_similarity={avg_sim:.2f} ≥ {min_avg_sim} — docs đủ chất lượng",
-                        action="Evaluate",
-                        action_input=f"avg_sim={avg_sim:.3f}",
-                        observation=f"Docs tốt ({len(all_results)} đoạn, avg_sim={avg_sim:.2f}) → generate",
-                    )
-                    logger.info(f"✅ Hop {hop+1}: avg_sim={avg_sim:.2f} đạt ngưỡng, proceed to generate.")
-                    break
-
-                # Avg similarity thấp — chạy LLM Evaluate để xác nhận
-                notify(f"🧐 Đang đánh giá mức độ liên quan của tài liệu...")
-                context_for_eval = self._build_context(all_results[:top_k])
-                is_relevant, eval_reason = self._evaluate_context(question, context_for_eval)
-
+                eval_data = eval_result.data
                 state.add_iteration(
-                    thought=f"Hop {hop+1}: avg_sim={avg_sim:.2f} thấp, cần LLM evaluate",
-                    action="Evaluate",
-                    action_input=context_for_eval[:100] + "...",
-                    observation=f"Liên quan: {is_relevant} | Lý do: {eval_reason}",
+                    thought=f"Hop {hop + 1}: avg_sim={eval_data.get('avg_sim', 0):.2f}",
+                    action=self._tools["evaluate"].name,
+                    action_input=f"avg_sim={eval_data.get('avg_sim', 0):.3f}",
+                    observation=f"relevant={eval_data.get('relevant')} | {eval_data.get('reason', '')}",
                 )
 
-                if is_relevant:
-                    logger.info(f"✅ LLM xác nhận tài liệu liên quan sau hop {hop+1}. Generate.")
+                if eval_data.get("relevant"):
+                    logger.info(f"✅ Hop {hop + 1}: Tài liệu liên quan → generate.")
                     break
 
-                # ---- QUERY REWRITE ----
+                # ── Tool 3: REWRITE (nếu chưa đạt) ──
                 if hop < self.MAX_RETRIEVAL_HOPS - 1:
-                    notify(f"✏️ Tài liệu chưa liên quan, đang viết lại câu hỏi...")
-                    rewritten = self._rewrite_query(question, eval_reason)
-                    if rewritten and rewritten != current_query:
-                        current_query = rewritten
+                    notify("✏️ Tài liệu chưa liên quan, đang viết lại câu hỏi...")
+                    rewrite_result = self._tools["rewrite"].execute(
+                        question=question,
+                        reason=eval_data.get("reason", ""),
+                    )
+
+                    if rewrite_result.success and rewrite_result.data != current_query:
+                        current_query = rewrite_result.data
                         state.add_iteration(
-                            thought=f"Query rewrite: '{rewritten}'",
-                            action="QueryRewrite",
+                            thought=f"Query rewrite: '{rewrite_result.data}'",
+                            action=self._tools["rewrite"].name,
                             action_input=question,
-                            observation=f"Query mới: {rewritten}",
+                            observation=rewrite_result.message,
                         )
                     else:
-                        logger.info("Query rewrite không tạo ra query mới. Dừng tìm kiếm.")
+                        logger.info("Query rewrite không tạo ra query mới. Dừng.")
                         break
 
             # ============================================================
-            # GENERATE ANSWER
+            # GENERATE ANSWER (Tool 4)
             # ============================================================
             if not all_results:
-                answer = self._no_result_answer(question)
+                answer = ConfidenceGate._no_result_answer(question)
                 state.set_answer(answer, confidence=0.1, success=False)
                 return self._build_result(answer, 0.1, False, state, [])
 
@@ -506,56 +462,46 @@ class StudentRegulationAgent:
                     state.add_source(source)
 
             notify("🧠 Đang tổng hợp câu trả lời...")
-            context = self._build_context(all_results)
-            state.add_iteration(
-                thought="Đã có đủ tài liệu, tổng hợp câu trả lời",
-                action="GenerateAnswer",
-                action_input=question,
-                observation=f"Context từ {len(all_results)} đoạn",
+            gen_result = self._tools["generate"].execute(
+                question=question,
+                results=all_results,
             )
 
-            raw_answer = self._generate_answer(question, context)
-            confidence = self._calculate_confidence(all_results, raw_answer, state.iterations)
+            state.add_iteration(
+                thought="Đã có đủ tài liệu, tổng hợp câu trả lời",
+                action=self._tools["generate"].name,
+                action_input=question,
+                observation=f"Generated {len(gen_result.data)} chars",
+            )
+
+            raw_answer = gen_result.data
+
+            # ============================================================
+            # CONFIDENCE GATE (Postprocessing — src/pipeline/)
+            # ============================================================
+            confidence = ConfidenceGate.calculate_confidence(
+                all_results, raw_answer, state.iterations
+            )
+            gate_result = self.confidence_gate.evaluate(
+                confidence, raw_answer, question
+            )
 
             logger.info(
                 f"[ConfidenceGate] confidence={confidence:.1%} | "
-                f"high={high_conf:.0%}, low={low_conf:.0%}"
+                f"action={gate_result.action}"
             )
 
-            # ============================================================
-            # [FIX v4 — CRITICAL] CONFIDENCE GATE
-            # Dùng confidence score để QUYẾT ĐỊNH cách trả lời.
-            # Trước đây: chỉ tính rồi hiển thị, không filter.
-            # Bây giờ: gate cứng theo 3 mức.
-            # ============================================================
-            if confidence < low_conf:
-                # Dưới ngưỡng tối thiểu → từ chối, trả về thông báo không tìm thấy
-                logger.warning(
-                    f"[ConfidenceGate] {confidence:.1%} < low_threshold {low_conf:.0%} — reject answer."
-                )
-                answer = self._no_result_answer(question)
-                state.set_answer(answer, confidence=confidence, success=False)
-                notify(f"⚠️ Độ tin cậy thấp ({confidence:.0%}), không đủ thông tin để trả lời.")
-            elif confidence < high_conf:
-                # Vùng trung gian → trả lời kèm cảnh báo
-                logger.info(
-                    f"[ConfidenceGate] {confidence:.1%} trong vùng trung gian — answer with warning."
-                )
-                answer = (
-                    raw_answer
-                    + f"\n\n---\n⚠️ *Lưu ý: Độ tin cậy của câu trả lời này ở mức trung bình "
-                    f"({confidence:.0%}). Vui lòng kiểm tra lại với tài liệu gốc hoặc liên hệ "
-                    f"Phòng Đào tạo để xác nhận.*"
-                )
-                state.set_answer(answer, confidence=confidence, success=True)
-            else:
-                # Đủ ngưỡng → trả lời bình thường
-                answer = raw_answer
-                state.set_answer(answer, confidence=confidence, success=True)
+            answer = gate_result.answer
+            state.set_answer(answer, confidence=confidence, success=gate_result.success)
+
+            if gate_result.action == "reject":
+                notify(f"⚠️ Độ tin cậy thấp ({confidence:.0%}), không đủ thông tin.")
 
             logger.info(f"✅ Done — confidence: {confidence:.1%}, hops: {state.iterations}")
 
-            # Lưu turn vào memory (bao gồm entity đã bóc tách)
+            # ============================================================
+            # SAVE MEMORY
+            # ============================================================
             if self.memory:
                 entities_to_save = intent_result.entities if intent_result else {}
                 self.memory.add_turn(
@@ -566,19 +512,16 @@ class StudentRegulationAgent:
                     intent_name=intent_result.intent_name if intent_result else "",
                     needs_clarification=False,
                 )
-                logger.debug(
-                    f"[Memory] Saved turn for session '{session_id}'. "
-                    f"Total turns: {self.memory.get_turn_count(session_id)}"
-                )
 
-            # Chuẩn bị chunks để UI hiển thị
+            # Build response
             retrieved_chunks = self._format_chunks_for_ui(all_results)
-            result = self._build_result(answer, confidence, state.success, state, retrieved_chunks)
+            result = self._build_result(
+                answer, confidence, gate_result.success, state, retrieved_chunks
+            )
             result["intent_name"] = intent_result.intent_name if intent_result else "UNKNOWN"
             result["entities"] = intent_result.entities if intent_result else {}
             result["needs_clarification"] = False
             return result
-
 
         except Exception as e:
             logger.error(f"❌ Agent error: {e}", exc_info=True)
@@ -586,148 +529,48 @@ class StudentRegulationAgent:
             return self._build_result(f"❌ Lỗi hệ thống: {e}", 0.0, False, state, [])
 
     # -------------------------------------------------------------- #
-    #  Retrieve                                                       #
+    #  Intent Gate (delegates to src/pipeline/)                       #
     # -------------------------------------------------------------- #
 
-    def _retrieve(self, query: str, k: int, threshold: float) -> list:
-        """Gọi ChromaDB similarity search."""
-        return self.vector_db_manager.search_similar(
-            query=query, k=k, score_threshold=threshold
+    def _run_intent_gate(self, question: str, session_id: str):
+        """Chạy IntentClassifier với memory context."""
+        if not self.intent_classifier:
+            return None
+
+        memory_context = self.memory.get_context(session_id) if self.memory else ""
+        memory_entities = (
+            self.memory.get_entities_from_memory(session_id) if self.memory else {}
         )
+        previous_intent = None
+        if self.memory:
+            previous_intent = self.memory.get_last_clarification_intent(session_id)
 
-    # -------------------------------------------------------------- #
-    #  Evaluate context                                               #
-    # -------------------------------------------------------------- #
-
-    def _evaluate_context(self, question: str, context: str) -> Tuple[bool, str]:
-        """
-        [FIX v2] Kiểm tra tài liệu có LIÊN QUAN đến chủ đề câu hỏi không.
-        Không đánh giá "hoàn hảo" mà chỉ đánh giá "có liên quan".
-        Returns: (is_relevant, reason)
-        """
-        prompt = _EVALUATE_PROMPT.format(question=question, context=context[:2000])
-        raw = ""
-        try:
-            raw = _invoke_llm(self.llm, self._provider, prompt)
-            match = re.search(r'\{.*?\}', raw, re.DOTALL)
-            if match:
-                data = json.loads(match.group())
-                # [FIX] Đọc key 'relevant' (mới), fallback sang 'sufficient' (cũ)
-                is_relevant = bool(data.get("relevant", data.get("sufficient", True)))
-                return is_relevant, data.get("reason", "")
-        except Exception as e:
-            logger.warning(f"Evaluate parse error: {e}. Raw: {raw[:200]}")
-        # Fallback: nếu parse thất bại → coi như liên quan để tránh vòng lặp
-        return True, "Không parse được kết quả đánh giá"
-
-    # _check_intent() đã xóa (dead code — thay thế bởi IntentClassifier.classify() từ v3)
-
-    # -------------------------------------------------------------- #
-    #  Query Rewrite                                                  #
-    # -------------------------------------------------------------- #
-
-    def _rewrite_query(self, original_question: str, reason: str) -> str:
-        """Yêu cầu LLM viết lại câu hỏi với thuật ngữ học thuật hơn."""
-        prompt = _REWRITE_PROMPT.format(question=original_question, reason=reason)
-        try:
-            rewritten = _invoke_llm(self.llm, self._provider, prompt).strip()
-            rewritten = rewritten.strip('"\'')  # Xóa dấu ngoặc kép nếu có
-            logger.info(f"✏️ Query rewritten: '{original_question}' → '{rewritten}'")
-            return rewritten
-        except Exception as e:
-            logger.warning(f"Query rewrite failed: {e}")
-            return original_question
-
-    # -------------------------------------------------------------- #
-    #  Build Context                                                   #
-    # -------------------------------------------------------------- #
-
-    def _build_context(self, results: list) -> str:
-        parts = []
-        for i, (doc, score) in enumerate(results, 1):
-            meta = doc.metadata if hasattr(doc, "metadata") else {}
-            content = doc.page_content if hasattr(doc, "page_content") else str(doc)
-            source = meta.get("source_file") or meta.get("source") or "Không rõ"
-            chapter = meta.get("chapter_title", "")
-            article = meta.get("article_title", "")
-
-            header = f"--- Đoạn {i} | Nguồn: {source} | Độ liên quan: {score:.1%} ---"
-            if chapter:
-                header += f"\nChương: {chapter}"
-            if article:
-                header += f"\nĐiều: {article}"
-            parts.append(f"{header}\n{content}")
-        return "\n\n".join(parts)
-
-    # -------------------------------------------------------------- #
-    #  Generate Answer                                                 #
-    # -------------------------------------------------------------- #
-
-    def _generate_answer(self, question: str, context: str) -> str:
-        prompt = _ANSWER_PROMPT.format(
-            system_prompt=self._system_prompt,  # [v5] dùng _system_prompt (có thể được cập nhật từ schema)
-            context=context,
+        return self.intent_classifier.classify(
             question=question,
-        )
-        return _invoke_llm(self.llm, self._provider, prompt)
-
-    def _no_result_answer(self, question: str) -> str:
-        return (
-            f"Xin lỗi, tôi không tìm thấy thông tin liên quan đến câu hỏi: **'{question}'** "
-            f"trong cơ sở dữ liệu quy chế hiện tại.\n\n"
-            f"Bạn có thể:\n"
-            f"• Thử hỏi lại với từ khóa khác (ví dụ: tên Chương, Điều cụ thể)\n"
-            f"• Liên hệ Phòng Đào tạo hoặc Phòng Công tác Sinh viên ĐHBK Hà Nội\n"
-            f"• Tra cứu trực tiếp: https://hust.edu.vn"
+            memory_context=memory_context,
+            memory_entities=memory_entities,
+            previous_intent=previous_intent,
         )
 
     # -------------------------------------------------------------- #
-    #  Confidence                                                     #
+    #  Helper methods                                                 #
     # -------------------------------------------------------------- #
 
-    def _calculate_confidence(self, results: list, answer: str, iterations: int) -> float:
-        score = 0.0
+    @staticmethod
+    def _merge_results(
+        existing: List[Tuple], new_results: list
+    ) -> List[Tuple]:
+        """Merge kết quả retrieve, dedup theo page_content."""
+        existing_contents = {doc.page_content for doc, _ in existing}
+        for doc, score in (new_results or []):
+            if doc.page_content not in existing_contents:
+                existing.append((doc, score))
+                existing_contents.add(doc.page_content)
+        return existing
 
-        # Yếu tố 1: Số lượng docs (tối đa 0.30)
-        doc_count = len(results)
-        score += min(doc_count / 5, 1.0) * 0.30
-
-        # Yếu tố 2: Chất lượng câu trả lời (tối đa 0.40)
-        if answer:
-            answer_lower = answer.lower()
-            has_numbers = any(c.isdigit() for c in answer)
-            has_legal = any(t in answer_lower for t in [
-                "điều", "khoản", "chương", "tín chỉ", "gpa", "cpa",
-                "%", "học kỳ", "năm học", "quyết định",
-            ])
-            is_negative = any(t in answer_lower for t in [
-                "không biết", "không tìm thấy", "không có thông tin", "xin lỗi",
-            ])
-            if is_negative:
-                score += 0.0
-            elif has_numbers and has_legal:
-                score += 0.40
-            elif has_numbers or has_legal:
-                score += 0.25
-            elif len(answer) > 100:
-                score += 0.15
-
-        # Yếu tố 3: Hiệu quả (tối đa 0.30) - ít hop hơn = tốt hơn
-        if iterations <= 2:
-            score += 0.30
-        elif iterations <= 4:
-            score += 0.20
-        elif iterations <= 6:
-            score += 0.10
-
-        return round(min(max(score, 0.0), 1.0), 2)
-
-    # -------------------------------------------------------------- #
-    #  Format chunks cho UI                                           #
-    # -------------------------------------------------------------- #
-
-    def _format_chunks_for_ui(self, results: list) -> List[Dict[str, Any]]:
-        """Chuẩn bị dữ liệu chunk để hiển thị raw text trên giao diện."""
+    @staticmethod
+    def _format_chunks_for_ui(results: list) -> List[Dict[str, Any]]:
+        """Chuẩn bị dữ liệu chunk để hiển thị trên giao diện."""
         chunks = []
         for i, (doc, score) in enumerate(results, 1):
             meta = doc.metadata if hasattr(doc, "metadata") else {}
@@ -741,12 +584,8 @@ class StudentRegulationAgent:
             })
         return chunks
 
-    # -------------------------------------------------------------- #
-    #  Build result dict                                              #
-    # -------------------------------------------------------------- #
-
+    @staticmethod
     def _build_result(
-        self,
         answer: str,
         confidence: float,
         success: bool,
