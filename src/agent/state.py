@@ -221,5 +221,5 @@ class AgentState:
         if final_answer:
             state.set_answer(final_answer, confidence, success)
         if gs.get("error"):
-            state.set_error(gs["error"])
+            state.set_error(gs.get("error", ""))
         return state
