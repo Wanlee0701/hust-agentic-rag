@@ -32,6 +32,7 @@ from src.pipeline.intent_classifier import IntentClassifier
 from src.pipeline.schema_loader import SchemaLoader
 from src.pipeline.confidence_gate import ConfidenceGate
 from src.memory.memory_manager import get_memory
+from src.agent.graph import build_graph
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,10 @@ class StudentRegulationAgent:
 
         # 7. Confidence Gate
         self._initialize_confidence_gate()
+
+        # 8. Build LangGraph
+        self._graph = build_graph(self)
+        logger.info("✅ LangGraph compiled")
 
         logger.info(
             f"✅ Agent ready. Tools: {list(self._tools.keys())}"
@@ -321,236 +326,89 @@ class StudentRegulationAgent:
                 status_callback(msg)
 
         logger.info(f"📝 Processing (session='{session_id}'): {question}")
-
-        # ============================================================
-        # BƯỚC 0: INTENT GATE (Preprocessing — src/pipeline/)
-        # ============================================================
         notify("🔎 Đang phân loại câu hỏi...")
-        intent_result = self._run_intent_gate(question, session_id)
 
-        if intent_result and intent_result.needs_clarification:
-            logger.info(
-                f"❓ Intent='{intent_result.intent_name}' | "
-                f"Missing: {intent_result.missing_fields}"
-            )
-            state = AgentState(query=question, max_iterations=1)
-            state.add_iteration(
-                thought=f"Intent '{intent_result.intent_name}' cần entity: {intent_result.missing_fields}",
-                action="Clarify",
-                action_input=question,
-                observation=f"Thiếu: {intent_result.missing_fields}",
-            )
-
-            # Lưu clarification state vào memory
-            if self.memory:
-                self.memory.add_turn(
-                    session_id=session_id,
-                    question=question,
-                    answer=intent_result.clarification_question,
-                    entities=intent_result.entities,
-                    intent_name=intent_result.intent_name,
-                    needs_clarification=True,
-                )
-
-            return {
-                "answer": intent_result.clarification_question,
-                "confidence": 0.0,
-                "success": False,
-                "needs_clarification": True,
-                "clarification_question": intent_result.clarification_question,
-                "intent_name": intent_result.intent_name,
-                "entities": intent_result.entities,
-                "state": state,
-                "retrieved_chunks": [],
-            }
-        elif intent_result:
-            logger.info(
-                f"✅ Intent='{intent_result.intent_name}' | "
-                f"Entities={intent_result.entities} | Pass to RAG."
-            )
-
-        # ============================================================
-        # BƯỚC 1-N: AGENT REASONING LOOP (gọi Tools)
-        # ============================================================
         agent_config = self.config.get("agent", {})
-        max_iter = agent_config.get("max_iterations", 5)
-        min_avg_sim = agent_config.get("min_avg_similarity", 0.45)
-        top_k = self.config.get("retrieval", {}).get("top_k", 3)
 
-        state = AgentState(query=question, max_iterations=max_iter)
-        current_query = question
-        all_results: List[Tuple] = []
+        initial_state: Dict[str, Any] = {
+            "question": question,
+            "session_id": session_id,
+            "intent_name": "UNKNOWN",
+            "entities": {},
+            "needs_clarification": False,
+            "clarification_question": "",
+            "missing_fields": [],
+            "current_query": question,
+            "all_results": [],
+            "hop_count": 0,
+            "max_hops": self.MAX_RETRIEVAL_HOPS,
+            "min_avg_sim": agent_config.get("min_avg_similarity", 0.45),
+            "top_k": self.config.get("retrieval", {}).get("top_k", 3),
+            "is_relevant": False,
+            "avg_sim": 0.0,
+            "eval_reason": "",
+            "raw_answer": "",
+            "confidence": 0.0,
+            "gate_action": "",
+            "final_answer": "",
+            "success": False,
+            "steps": [],
+            "sources": [],
+            "error": "",
+        }
 
         try:
-            for hop in range(self.MAX_RETRIEVAL_HOPS):
-                # ── Tool 1: RETRIEVE ──
-                notify(f"🔍 [{hop + 1}/{self.MAX_RETRIEVAL_HOPS}] Đang tìm kiếm: \"{current_query[:60]}\"")
-                retrieve_result = self._tools["retrieve"].execute(query=current_query)
-
-                state.add_iteration(
-                    thought=f"Tìm kiếm lần {hop + 1} với query: '{current_query}'",
-                    action=self._tools["retrieve"].name,
-                    action_input=current_query,
-                    observation=retrieve_result.message,
-                )
-
-                # Merge kết quả (dedup)
-                all_results = self._merge_results(all_results, retrieve_result.data)
-
-                if not all_results:
-                    logger.warning("⚠️ Không tìm thấy tài liệu liên quan.")
-                    break
-
-                # ── Tool 2: EVALUATE ──
-                notify("🧐 Đang đánh giá mức độ liên quan...")
-                eval_result = self._tools["evaluate"].execute(
-                    question=question,
-                    results=all_results,
-                    min_avg_sim=min_avg_sim,
-                    llm_invoker=self._create_llm_invoker(),
-                    top_k=top_k,
-                )
-
-                eval_data = eval_result.data
-                state.add_iteration(
-                    thought=f"Hop {hop + 1}: avg_sim={eval_data.get('avg_sim', 0):.2f}",
-                    action=self._tools["evaluate"].name,
-                    action_input=f"avg_sim={eval_data.get('avg_sim', 0):.3f}",
-                    observation=f"relevant={eval_data.get('relevant')} | {eval_data.get('reason', '')}",
-                )
-
-                if eval_data.get("relevant"):
-                    logger.info(f"✅ Hop {hop + 1}: Tài liệu liên quan → generate.")
-                    break
-
-                # ── Tool 3: REWRITE (nếu chưa đạt) ──
-                if hop < self.MAX_RETRIEVAL_HOPS - 1:
-                    notify("✏️ Tài liệu chưa liên quan, đang viết lại câu hỏi...")
-                    rewrite_result = self._tools["rewrite"].execute(
-                        question=question,
-                        reason=eval_data.get("reason", ""),
-                    )
-
-                    if rewrite_result.success and rewrite_result.data != current_query:
-                        current_query = rewrite_result.data
-                        state.add_iteration(
-                            thought=f"Query rewrite: '{rewrite_result.data}'",
-                            action=self._tools["rewrite"].name,
-                            action_input=question,
-                            observation=rewrite_result.message,
-                        )
-                    else:
-                        logger.info("Query rewrite không tạo ra query mới. Dừng.")
-                        break
-
-            # ============================================================
-            # GENERATE ANSWER (Tool 4)
-            # ============================================================
-            if not all_results:
-                answer = ConfidenceGate._no_result_answer(question)
-                state.set_answer(answer, confidence=0.1, success=False)
-                return self._build_result(answer, 0.1, False, state, [])
-
-            # Thu thập sources
-            for doc, _ in all_results:
-                if hasattr(doc, "metadata"):
-                    source = (
-                        doc.metadata.get("source_file")
-                        or doc.metadata.get("source")
-                        or "Không rõ nguồn"
-                    )
-                    state.add_source(source)
-
-            notify("🧠 Đang tổng hợp câu trả lời...")
-            gen_result = self._tools["generate"].execute(
-                question=question,
-                results=all_results,
-            )
-
-            state.add_iteration(
-                thought="Đã có đủ tài liệu, tổng hợp câu trả lời",
-                action=self._tools["generate"].name,
-                action_input=question,
-                observation=f"Generated {len(gen_result.data)} chars",
-            )
-
-            raw_answer = gen_result.data
-
-            # ============================================================
-            # CONFIDENCE GATE (Postprocessing — src/pipeline/)
-            # ============================================================
-            confidence = ConfidenceGate.calculate_confidence(
-                all_results, raw_answer, state.iterations
-            )
-            gate_result = self.confidence_gate.evaluate(
-                confidence, raw_answer, question
-            )
-
+            final_state = self._graph.invoke(initial_state)
             logger.info(
-                f"[ConfidenceGate] confidence={confidence:.1%} | "
-                f"action={gate_result.action}"
+                f"✅ Done — confidence: {final_state.get('confidence', 0):.1%} | "
+                f"steps: {len(final_state.get('steps', []))}"
             )
-
-            answer = gate_result.answer
-            state.set_answer(answer, confidence=confidence, success=gate_result.success)
-
-            if gate_result.action == "reject":
-                notify(f"⚠️ Độ tin cậy thấp ({confidence:.0%}), không đủ thông tin.")
-
-            logger.info(f"✅ Done — confidence: {confidence:.1%}, hops: {state.iterations}")
-
-            # ============================================================
-            # SAVE MEMORY
-            # ============================================================
-            if self.memory:
-                entities_to_save = intent_result.entities if intent_result else {}
-                self.memory.add_turn(
-                    session_id=session_id,
-                    question=question,
-                    answer=answer[:500],
-                    entities=entities_to_save,
-                    intent_name=intent_result.intent_name if intent_result else "",
-                    needs_clarification=False,
-                )
-
-            # Build response
-            retrieved_chunks = self._format_chunks_for_ui(all_results)
-            result = self._build_result(
-                answer, confidence, gate_result.success, state, retrieved_chunks
-            )
-            result["intent_name"] = intent_result.intent_name if intent_result else "UNKNOWN"
-            result["entities"] = intent_result.entities if intent_result else {}
-            result["needs_clarification"] = False
-            return result
-
+            return self._state_to_response(final_state)
         except Exception as e:
             logger.error(f"❌ Agent error: {e}", exc_info=True)
-            state.set_error(str(e), confidence=0.0)
-            return self._build_result(f"❌ Lỗi hệ thống: {e}", 0.0, False, state, [])
+            return {
+                "answer": f"❌ Lỗi hệ thống: {e}",
+                "confidence": 0.0,
+                "success": False,
+                "state": AgentState(query=question),
+                "retrieved_chunks": [],
+                "needs_clarification": False,
+                "clarification_question": "",
+                "intent_name": "UNKNOWN",
+                "entities": {},
+            }
 
-    # -------------------------------------------------------------- #
-    #  Intent Gate (delegates to src/pipeline/)                       #
-    # -------------------------------------------------------------- #
+    def _state_to_response(self, final_state: dict) -> Dict[str, Any]:
+        """Chuyển đổi GraphState dict → response dict cho app.py."""
+        state = AgentState.from_graph_state(final_state)
 
-    def _run_intent_gate(self, question: str, session_id: str):
-        """Chạy IntentClassifier với memory context."""
-        if not self.intent_classifier:
-            return None
+        if final_state.get("needs_clarification"):
+            return {
+                "answer": final_state["clarification_question"],
+                "confidence": 0.0,
+                "success": False,
+                "state": state,
+                "retrieved_chunks": [],
+                "needs_clarification": True,
+                "clarification_question": final_state["clarification_question"],
+                "intent_name": final_state["intent_name"],
+                "entities": final_state["entities"],
+            }
 
-        memory_context = self.memory.get_context(session_id) if self.memory else ""
-        memory_entities = (
-            self.memory.get_entities_from_memory(session_id) if self.memory else {}
+        retrieved_chunks = self._format_chunks_for_ui(
+            final_state.get("all_results", [])
         )
-        previous_intent = None
-        if self.memory:
-            previous_intent = self.memory.get_last_clarification_intent(session_id)
-
-        return self.intent_classifier.classify(
-            question=question,
-            memory_context=memory_context,
-            memory_entities=memory_entities,
-            previous_intent=previous_intent,
-        )
+        return {
+            "answer": final_state.get("final_answer", ""),
+            "confidence": final_state.get("confidence", 0.0),
+            "success": final_state.get("success", False),
+            "state": state,
+            "retrieved_chunks": retrieved_chunks,
+            "needs_clarification": False,
+            "clarification_question": "",
+            "intent_name": final_state.get("intent_name", "UNKNOWN"),
+            "entities": final_state.get("entities", {}),
+        }
 
     # -------------------------------------------------------------- #
     #  Helper methods                                                 #
