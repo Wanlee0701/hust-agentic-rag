@@ -182,9 +182,44 @@ class AgentState:
         """Format các steps để in đẹp"""
         if not self.steps:
             return "  (No steps yet)"
-        
+
         formatted = []
         for step in self.steps:
             formatted.append(f"  [{step.iteration}] {step.action}: {step.action_input[:50]}...")
-        
+
         return "\n".join(formatted)
+
+    @classmethod
+    def from_graph_state(cls, gs: dict) -> "AgentState":
+        """
+        Chuyển đổi GraphState dict → AgentState object.
+        Dùng để tương thích ngược với app.py (vẫn hiển thị AgentState).
+
+        Args:
+            gs: Final state dict từ graph.invoke().
+
+        Returns:
+            AgentState object đã được populate đầy đủ.
+        """
+        state = cls(
+            query=gs.get("question", ""),
+            max_iterations=gs.get("max_hops", 2) * 4,
+        )
+        for step_dict in gs.get("steps", []):
+            state.add_iteration(
+                thought=step_dict.get("thought", ""),
+                action=step_dict.get("action", ""),
+                action_input=step_dict.get("action_input", ""),
+                observation=step_dict.get("observation", ""),
+            )
+        for src in gs.get("sources", []):
+            state.add_source(src)
+
+        final_answer = gs.get("final_answer") or gs.get("clarification_question", "")
+        confidence = gs.get("confidence", 0.0)
+        success = gs.get("success", False)
+        if final_answer:
+            state.set_answer(final_answer, confidence, success)
+        if gs.get("error"):
+            state.set_error(gs["error"])
+        return state
