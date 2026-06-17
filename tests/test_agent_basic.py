@@ -34,9 +34,9 @@ except ImportError as e:
 # Test 2: Import agent modules
 print("\n✓ [Test 2] Kiểm tra import agent modules...")
 try:
-    from src.agent import StudentRegulationAgent, AgentState
+    from src.agent import StudentRegulationAgent, AgentState, build_graph, GraphState
     from src.agent.prompts import get_react_prompt
-    from src.agent.tools import AgentTools
+    from src.agent.tools import RetrieveTool, EvaluateTool, RewriteTool, GenerateTool
     print("  ✅ Agent modules import OK")
 except ImportError as e:
     print(f"  ❌ Agent import error: {e}")
@@ -101,7 +101,8 @@ try:
     print(f"  ✅ Agent initialized successfully!")
     print(f"     - LLM: {agent.llm}")
     print(f"     - Vector DB: {agent.vector_db_manager}")
-    print(f"     - Tools: {len(agent.tools.get_tools_list())} tools available")
+    print(f"     - Tools: {list(agent._tools.keys())}")
+    print(f"     - Graph type: {type(agent._graph).__name__}")
 except Exception as e:
     print(f"  ❌ Agent initialization error: {e}")
     import traceback

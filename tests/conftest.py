@@ -5,6 +5,13 @@ import pytest
 import sys
 from pathlib import Path
 
+# Diagnostic scripts designed to run with `python`, not pytest
+collect_ignore = [
+    "test_agent_basic.py",
+    "test_agent_flow.py",
+    "test_pipeline_diagnostic.py",
+]
+
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
