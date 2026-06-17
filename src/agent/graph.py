@@ -294,18 +294,19 @@ def build_graph(agent) -> Any:
             results=all_results,
         )
 
+        answer_text = gen_result.data if gen_result.success and gen_result.data else ""
         step = {
             "iteration": len(state["steps"]) + 1,
             "thought": "Đã có đủ tài liệu, tổng hợp câu trả lời",
             "action": "generate_answer",
             "action_input": state["question"],
-            "observation": f"Generated {len(gen_result.data)} chars",
+            "observation": f"Generated {len(answer_text)} chars",
         }
 
-        logger.info(f"[generate_node] answer_len={len(gen_result.data)}")
+        logger.info(f"[generate_node] answer_len={len(answer_text)}")
 
         return {
-            "raw_answer": gen_result.data,
+            "raw_answer": answer_text,
             "sources": sources,
             "steps": state["steps"] + [step],
         }
@@ -328,6 +329,15 @@ def build_graph(agent) -> Any:
         confidence = ConfidenceGate.calculate_confidence(
             all_results, state["raw_answer"], len(state["steps"])
         )
+
+        if agent.confidence_gate is None:
+            return {
+                "confidence": confidence,
+                "gate_action": "pass",
+                "final_answer": state["raw_answer"],
+                "success": True,
+            }
+
         gate_result = agent.confidence_gate.evaluate(
             confidence, state["raw_answer"], state["question"]
         )
