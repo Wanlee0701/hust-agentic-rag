@@ -115,11 +115,34 @@ def _invoke_llm(llm, provider: str, prompt: str) -> str:
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
+
     response = llm.invoke(prompt)
+
     # Gemini trả về AIMessage, Ollama trả về str
     if hasattr(response, "content"):
-        return response.content.strip()
+        content = response.content
+
+        # Gemini-2.5-flash (thinking mode) đôi khi trả về content rỗng
+        # khi bị safety filter hoặc thinking budget cạn kiệt.
+        # Fallback: thử lấy text từ additional_kwargs hoặc response_metadata.
+        if not content:
+            # Thử lấy từ additional_kwargs (một số version LangChain lưu ở đây)
+            additional = getattr(response, "additional_kwargs", {})
+            content = additional.get("text", "") or additional.get("content", "")
+
+        if not content:
+            # Thử lấy từ response_metadata nếu có
+            meta = getattr(response, "response_metadata", {})
+            finish_reason = meta.get("finish_reason", "unknown")
+            logger.warning(
+                f"[_invoke_llm] Gemini trả về content rỗng. "
+                f"finish_reason={finish_reason}. "
+                "Có thể bị safety filter hoặc hết token thinking."
+            )
+            # Trả về chuỗi placeholder để tránh crash LangGraph
+            return "[Hệ thống không nhận được phản hồi từ mô hình. Vui lòng thử lại.]"
+
+        return content.strip()
     return str(response).strip()
 
 
@@ -272,9 +295,20 @@ class StudentRegulationAgent:
         )
         logger.info("✅ ConversationMemory initialized")
 
+    def _create_llm_invoker(self):
+        """
+        Tạo và trả về một Callable(prompt: str) -> str
+        được dùng bởi các Tool trong graph.py (EvaluateTool, RewriteTool...).
+        Wraps _invoke_llm với llm và provider hiện tại của agent.
+        """
+        def invoker(prompt: str) -> str:
+            return _invoke_llm(self.llm, self._provider, prompt)
+        return invoker
+
 
     # -------------------------------------------------------------- #
     #  Public API                                                     #
+
     # -------------------------------------------------------------- #
 
     def answer_question(
