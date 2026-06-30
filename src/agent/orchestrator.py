@@ -61,6 +61,32 @@ def _build_llm(llm_config: Dict[str, Any]):
         logger.info(f"✅ LLM (Gemini) initialized: {llm_config.get('model_name')}")
         return llm, provider
 
+    elif provider == "openai":
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError:
+            raise ImportError(
+                "Cần cài thêm gói: pip install langchain-openai"
+            )
+
+        # Lấy API key từ env hoặc từ config
+        api_key_env = llm_config.get("api_key_env", "OPENAI_API_KEY")
+        api_key = os.environ.get(api_key_env) or llm_config.get("api_key", "")
+        if not api_key:
+            raise ValueError(
+                f"Không tìm thấy OpenAI API key. "
+                f"Hãy set biến môi trường '{api_key_env}' hoặc thêm 'api_key' vào config.yaml"
+            )
+
+        llm = ChatOpenAI(
+            model=llm_config.get("model_name", "gpt-4o-mini"),
+            api_key=api_key,
+            temperature=llm_config.get("temperature", 0.3),
+            max_tokens=llm_config.get("max_tokens", 2048)
+        )
+        logger.info(f"✅ LLM (OpenAI) initialized: {llm_config.get('model_name')}")
+        return llm, provider
+
     else:  # default: ollama
         try:
             from langchain_ollama import OllamaLLM
@@ -295,6 +321,7 @@ class StudentRegulationAgent:
             if self.memory:
                 previous_intent = self.memory.get_last_clarification_intent(session_id)
 
+<<<<<<< Updated upstream
             intent_result = self.intent_classifier.classify(
                 question=question,
                 memory_context=memory_context,
@@ -358,6 +385,40 @@ class StudentRegulationAgent:
 
         current_query = question
         all_results: List[Tuple] = []
+=======
+        # Lấy memory context trước khi tạo initial_state
+        memory_context = ""
+        if self.memory:
+            memory_context = self.memory.get_context(session_id)
+
+        initial_state: Dict[str, Any] = {
+            "question": question,
+            "session_id": session_id,
+            "intent_name": "UNKNOWN",
+            "entities": {},
+            "needs_clarification": False,
+            "clarification_question": "",
+            "missing_fields": [],
+            "current_query": question,
+            "all_results": [],
+            "hop_count": 0,
+            "max_hops": self.MAX_RETRIEVAL_HOPS,
+            "min_avg_sim": agent_config.get("min_avg_similarity", 0.45),
+            "top_k": self.config.get("retrieval", {}).get("top_k", 3),
+            "is_relevant": False,
+            "avg_sim": 0.0,
+            "eval_reason": "",
+            "raw_answer": "",
+            "confidence": 0.0,
+            "gate_action": "",
+            "final_answer": "",
+            "success": False,
+            "steps": [],
+            "sources": [],
+            "error": "",
+            "memory_context": memory_context,
+        }
+>>>>>>> Stashed changes
 
         try:
             # ============================================================

@@ -213,19 +213,12 @@ vectordb:
 # RETRIEVAL - Tìm kiếm và lấy dữ liệu
 # ============================================================================
 retrieval:
-  # Số lượng documents trả về
+  # Số lượng documents trả về mỗi lần gọi RetrieveTool
   top_k: 3
   
   # Ngưỡng similarity score (0-1)
-  # 0 = không filter, 1 = chỉ lấy perfect match
   # bge-m3 cosine distance: 0.35 là ngưỡng hợp lý cho tiếng Việt
   similarity_threshold: 0.35
-  
-  # Trọng số cho semantic search
-  semantic_weight: 0.6
-  
-  # Trọng số cho keyword search
-  keyword_weight: 0.4
 
 # ============================================================================
 # LLM - Language Model
@@ -238,6 +231,8 @@ llm:
   # model_name: "gemma_nothink"
   provider: "gemini"
   model_name: "gemini-2.5-flash"   # Ollama: tên model; Gemini: e.g. 'gemini-1.5-flash'
+  # provider: "openai"            # <-- Đổi thành 'gemini' để dùng Gemini
+  # model_name: "gpt-4o-mini"           # Ollama: tên model;
   base_url: "http://localhost:11434"  # Chỉ dùng khi provider=ollama
   temperature: 0.3
   max_tokens: 2048
@@ -259,17 +254,27 @@ agent:
   high_confidence_threshold: 0.65   # ≥ 65%: trả lời bình thường
   low_confidence_threshold: 0.35    # < 35%: từ chối, trả về "không tìm thấy"
   # Ngưỡng avg similarity của docs để quyết định có cần rewrite query không
-  min_avg_similarity: 0.45          # avg sim ≥ 45% → docs tốt, không cần rewrite
+  min_avg_similarity: 0.65          # avg sim ≥ 65% → docs tốt, không cần rewrite
 
 # ============================================================================
-# LOGGING - Log settings
+# LOGGING — Cấu hình ghi log
+# Ghi chú: app.py tự cấu hình logging (file + console handler) với UTF-8.
+# Section này dùng làm tham chiếu cho các script phụ trợ.
 # ============================================================================
 logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  level: "INFO"                # DEBUG, INFO, WARNING, ERROR
   file: "./logs/chatbot.log"
-  max_size_mb: 100
-  backup_count: 5
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  format: "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
+
+# ============================================================================
+# LANGSMITH — Observability & Tracing (tuỳ chọn)
+# Kích hoạt bằng cách set biến môi trường trong file .env
+# Khi bật, toàn bộ LangGraph traces được ghi lên dashboard LangSmith.
+# ============================================================================
+# Biến môi trường cần set (trong .env):
+#   LANGCHAIN_TRACING_V2=true
+#   LANGCHAIN_API_KEY=lsv2_pt_...
+#   LANGCHAIN_PROJECT=hust-agentic-rag
 
 # ============================================================================
 # FRONTEND - Streamlit
@@ -278,14 +283,6 @@ frontend:
   framework: "streamlit"
   port: 8501
   theme: "light"
-
-# ============================================================================
-# API - REST API settings
-# ============================================================================
-api:
-  enabled: false
-  port: 8000
-  host: "0.0.0.0"
 
 # ============================================================================
 # INTENTS — Định nghĩa các nhóm câu hỏi và entity yêu cầu
