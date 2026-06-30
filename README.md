@@ -1,158 +1,352 @@
-# 🤖 AgenticRAG Chatbot Framework
+# 🎓 HUST Agentic RAG — Chatbot Hỏi Đáp Quy Chế Sinh Viên
 
-![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)
-![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-black.svg)
-![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)
-
-An open-source, highly customizable **AgenticRAG (Retrieval-Augmented Generation)** framework designed to help you quickly build an intelligent document-answering chatbot. This system uses fully local Large Language Models (via Ollama) ensuring **100% data privacy**, combined with an advanced reasoning agent that synthesizes information, evaluates its own searches, and provides transparent citations.
+> Hệ thống Chatbot tra cứu quy chế đào tạo Đại học Bách Khoa Hà Nội dựa trên kiến trúc **Agentic RAG** với đồ thị trạng thái **LangGraph**.
 
 ---
 
-## ✨ Why AgenticRAG?
+## 📋 Mục lục
 
-Traditional RAG systems simply search for keywords and pass them to an LLM. This **AgenticRAG** framework goes a step further:
-- 🧠 **Self-Reasoning:** The Agent plans its search, evaluates the retrieved context, and decides if it needs to search again with different queries (Fallback Retrieval) before answering.
-- 🎯 **Hybrid Retrieval:** Automatically combines Semantic Search (`BAAI/bge-m3`) with Keyword Search for pinpoint accuracy.
-- 🔒 **100% Local & Private:** No API keys required. Everything runs on your own hardware or server.
-- 🚀 **Plug & Play:** Just drop your PDF files into a folder, run a command, and your custom AI is ready.
----
-
-## 📋 Prerequisites & System Requirements
-
-Before you clone and run this repository, ensure your system meets the following requirements:
-
-- **Operating System:** Windows 10/11, macOS, or Linux
-- **Hardware:** Minimum 8GB RAM (16GB+ highly recommended for running local LLMs smoothly).
-- **Git:** Installed on your system to clone the repository.
-- **Docker & Docker Compose** *(Recommended)*: If using the Docker deployment method, ensure Docker Desktop (or Docker Engine) is installed and running.
-- **Python 3.10+** *(Alternative)*: Only required if you choose the Manual Installation method.
-- **Ollama:** Installed locally or via Docker. Used to serve the open-source LLMs (e.g., Mistral, Llama 3, Gemma).
----
-
-## 📋 Prerequisites & System Requirements
-
-Before you clone and run this repository, ensure your system meets the following requirements:
-
-- **Operating System:** Windows 10/11, macOS, or Linux
-- **Hardware:** Minimum 8GB RAM (16GB+ highly recommended for running local LLMs smoothly).
-- **Git:** Installed on your system to clone the repository.
-- **Docker & Docker Compose** *(Recommended)*: If using the Docker deployment method, ensure Docker Desktop (or Docker Engine) is installed and running.
-- **Python 3.10+** *(Alternative)*: Only required if you choose the Manual Installation method.
-- **Ollama:** Installed locally or via Docker. Used to serve the open-source LLMs (e.g., Mistral, Llama 3, Gemma).
+- [Giới thiệu](#-giới-thiệu)
+- [Kiến trúc hệ thống](#-kiến-trúc-hệ-thống)
+- [Yêu cầu cài đặt](#-yêu-cầu-cài-đặt)
+- [Hướng dẫn cài đặt](#-hướng-dẫn-cài-đặt)
+- [Cấu hình hệ thống](#-cấu-hình-hệ-thống)
+- [Xây dựng cơ sở tri thức](#-xây-dựng-cơ-sở-tri-thức)
+- [Khởi chạy ứng dụng](#-khởi-chạy-ứng-dụng)
+- [Cấu trúc dự án](#-cấu-trúc-dự-án)
+- [Xử lý sự cố](#-xử-lý-sự-cố)
 
 ---
 
-## 🛠️ Quick Start (Docker Deployment)
+## 🚀 Giới thiệu
 
-Docker is the recommended way to deploy this framework, ensuring perfectly isolated environments.
+Chatbot sử dụng kiến trúc **Agentic RAG** — Agent thông minh được điều phối bởi **LangGraph StateGraph** có khả năng:
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/Wanlee0701/hust-agentic-rag
-cd agentic-rag-framework
+- 🧠 **Phân loại ý định** câu hỏi và phát hiện thông tin còn thiếu (Intent Gate)
+- 🔍 **Truy xuất đa vòng** — tự động viết lại truy vấn nếu kết quả chưa đủ tốt (Multi-hop Retrieval)
+- ✅ **Kiểm soát chất lượng đầu ra** — tính điểm tin cậy và từ chối trả lời khi không có đủ căn cứ (Confidence Gate)
+- 💬 **Duy trì ngữ cảnh** hội thoại đa lượt (Sliding Window Memory)
+
+---
+
+## 🏗 Kiến trúc hệ thống
+
+```
+Câu hỏi của người dùng
+        │
+        ▼
+┌─────────────────┐
+│   Intent Gate   │ ← Phân loại ý định, phát hiện thực thể thiếu
+└────────┬────────┘
+         │ (nếu đủ thông tin)
+         ▼
+┌─────────────────┐
+│    Retrieve     │ ← Tìm kiếm ChromaDB (BAAI/bge-m3)
+└────────┬────────┘
+         ▼
+┌─────────────────┐        ┌──────────────┐
+│    Evaluate     │──────▶ │    Rewrite   │ ← Viết lại truy vấn (nếu cần)
+└────────┬────────┘        └──────┬───────┘
+         │ (relevant)             │ (quay lại Retrieve)
+         ▼
+┌─────────────────┐
+│    Generate     │ ← Tổng hợp câu trả lời (Gemini / Ollama)
+└────────┬────────┘
+         ▼
+┌─────────────────┐
+│ Confidence Gate │ ← Pass / Warn / Reject
+└────────┬────────┘
+         ▼
+   Câu trả lời + Nguồn trích dẫn
 ```
 
-### 2. Add Your Documents
-Drop any PDF documents you want the chatbot to read into the `knowledge_base/raw/` directory.
+---
 
-### 3. Start the System
-Run the following command to start both the Chatbot UI and the Ollama LLM server:
-```bash
-docker-compose up -d --build
-```
+## 💻 Yêu cầu cài đặt
 
-### 4. Pull the LLM Model (First time only)
-By default, the system uses the `gemma-4-E4B` model (or `mistral`). Tell the Ollama container to download it:
-```bash
-docker exec -it ollama-service ollama pull gemma-4-E4B
-```
+| Thành phần | Phiên bản tối thiểu | Ghi chú |
+|---|---|---|
+| **Python** | 3.10+ | Khuyến nghị 3.11 |
+| **RAM** | 8 GB | 16 GB nếu dùng Ollama local |
+| **Ổ cứng** | 3 GB trống | Dành cho model embedding + ChromaDB |
+| **GPU** | Không bắt buộc | Cần nếu chạy LLM local qua Ollama |
 
-### 5. Build Your Knowledge Base
-Convert your PDFs into the Vector Database (ChromaDB):
-```bash
-docker exec -it chatbot-app python scripts/build_knowledge_base.py
-```
+### LLM Backend (chọn một trong hai)
 
-### 6. Access the App
-Open your browser and navigate to `http://localhost:8501`. (If hosted on a server, use `http://<server-ip>:8501`).
+| Backend | Ưu điểm | Nhược điểm |
+|---|---|---|
+| **Gemini API** *(mặc định)* | Nhanh, không cần GPU | Cần API Key, gửi dữ liệu ra ngoài |
+| **Ollama (Local)** | Bảo mật tuyệt đối | Cần GPU ≥ 8GB VRAM, tốc độ chậm hơn |
 
 ---
 
-## 🐍 Manual Installation (Without Docker)
+## 📦 Hướng dẫn cài đặt
 
-1. **Setup Python Environment:**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-2. **Setup Ollama:** Install [Ollama](https://ollama.com/), run `ollama serve`, and pull your preferred model (`ollama pull gemma-4-E4B`).
-3. **Add PDFs:** Place your files in `knowledge_base/raw/`.
-4. **Build Vector DB:** `python scripts/build_knowledge_base.py`
-5. **Run the App:** `streamlit run app.py`
+### Bước 1: Clone dự án
+
+```bash
+git clone https://github.com/Wanlee0701/hust-agentic-rag.git
+cd hust-agentic-rag
+```
+
+### Bước 2: Tạo môi trường ảo Python
+
+```bash
+# Tạo virtual environment
+python -m venv venv
+
+# Kích hoạt (Windows)
+venv\Scripts\activate
+
+# Kích hoạt (macOS/Linux)
+source venv/bin/activate
+```
+
+### Bước 3: Cài đặt thư viện
+
+```bash
+pip install -r requirements.txt
+```
+
+> ⏳ Lần đầu chạy, model embedding `BAAI/bge-m3` (~1.1 GB) sẽ được tải tự động từ HuggingFace. Đảm bảo bạn có kết nối Internet ổn định.
+
+### Bước 4: Cấu hình biến môi trường
+
+```bash
+# Sao chép file mẫu
+cp .env.example .env
+```
+
+Mở file `.env` vừa tạo và điền thông tin:
+
+```env
+# ── Google Gemini (bắt buộc khi dùng provider='gemini') ──
+# Lấy API Key miễn phí tại: https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# ── LangSmith Observability (tuỳ chọn — để theo dõi trace) ──
+# Đăng ký tại: https://smith.langchain.com
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=your_langsmith_api_key_here
+LANGCHAIN_PROJECT=hust-agentic-rag
+
+# ── Ollama (chỉ cần nếu dùng provider='ollama') ──
+# LLM_SERVICE_URL=http://localhost:11434
+```
+
+> ⚠️ **Lưu ý bảo mật:** File `.env` đã được thêm vào `.gitignore`. **Không bao giờ commit file này lên GitHub.**
 
 ---
 
-## ⚙️ Configuration (`config.yaml`)
+## ⚙️ Cấu hình hệ thống
 
-The entire framework is controlled by `config.yaml`. You don't need to touch the code to customize the chatbot for your specific use case.
+Toàn bộ tham số của hệ thống được quản lý tập trung tại file [`config.yaml`](./config.yaml). Dưới đây là các mục quan trọng bạn có thể tùy chỉnh:
 
-### 1. Changing the LLM Model
-Want to use a different model (e.g., `llama3`, `qwen`, `mistral`)? Just change the `model_name` and ensure you have pulled it via Ollama.
+### 🤖 Chọn LLM Backend (`llm`)
+
 ```yaml
 llm:
-  provider: "ollama"
-  model_name: "llama3"       # <-- Change this!
-  base_url: "http://localhost:11434"
+  # --- Chế độ 1: Dùng Google Gemini API (mặc định, khuyến nghị) ---
+  provider: "gemini"
+  model_name: "gemini-2.5-flash"   # Hoặc: gemini-1.5-flash, gemini-1.5-pro
+
+  # --- Chế độ 2: Dùng Ollama Local (cần GPU, bảo mật hơn) ---
+  # provider: "ollama"
+  # model_name: "llama3"           # Tên model đã pull về qua: ollama pull llama3
+  # base_url: "http://localhost:11434"
+
+  temperature: 0.3      # Độ sáng tạo (0.0 = chính xác, 1.0 = sáng tạo)
+  max_tokens: 2048      # Độ dài tối đa của câu trả lời
+  timeout_seconds: 120  # Thời gian chờ tối đa mỗi lần gọi LLM
 ```
 
-### 2. PDF Processing & Metadata
-If you have multiple documents targeting different user groups, you can define metadata in the config. The agent can use this metadata to filter searches.
+### 🔍 Cấu hình Retrieval (`retrieval`)
+
+```yaml
+retrieval:
+  top_k: 3                    # Số đoạn tài liệu lấy về mỗi lần tìm kiếm
+                              # Tăng lên 5-7 nếu muốn context phong phú hơn
+  similarity_threshold: 0.35  # Ngưỡng điểm tương đồng (0.0 - 1.0)
+                              # Tăng lên để lấy ít nhưng chính xác hơn
+                              # Giảm xuống nếu hệ thống trả về "không tìm thấy" quá nhiều
+```
+
+### 🧠 Cấu hình Agent (`agent`)
+
+```yaml
+agent:
+  max_iterations: 5             # Số vòng lặp Retrieve-Evaluate-Rewrite tối đa
+  high_confidence_threshold: 0.65  # ≥ 65%: trả lời bình thường (Pass)
+  low_confidence_threshold: 0.35   # < 35%: từ chối trả lời (Reject)
+                                   # 35-65%: trả lời kèm cảnh báo (Warn)
+  min_avg_similarity: 0.65      # Ngưỡng avg similarity để kết luận tài liệu đủ tốt
+```
+
+### 💬 Cấu hình Bộ nhớ Hội thoại (`memory`)
+
+```yaml
+memory:
+  enabled: true
+  window_size: 5            # Số cặp Q&A gần nhất được ghi nhớ
+                            # Tăng lên để bot nhớ ngữ cảnh dài hơn
+  max_context_chars: 1500   # Giới hạn ký tự context đưa vào prompt
+```
+
+### ✂️ Cấu hình Phân đoạn Văn bản (`chunking`)
+
+```yaml
+chunking:
+  chunk_size: 1000    # Kích thước mỗi đoạn (tính bằng ký tự)
+  chunk_overlap: 200  # Số ký tự chồng lấp giữa 2 đoạn liền kề
+                      # Tăng overlap nếu câu trả lời hay bị thiếu ngữ cảnh
+```
+
+---
+
+## 📚 Xây dựng cơ sở tri thức
+
+### Bước 1: Thêm tài liệu PDF
+
+Đặt tất cả các file PDF quy chế vào thư mục:
+
+```
+knowledge_base/raw/
+├── Quy_che_25.pdf
+├── Hoc_bong_KKHT_2023.pdf
+├── QD_NN_K68.pdf
+└── ... (các file PDF khác)
+```
+
+### Bước 2: Đăng ký metadata cho tài liệu mới (nếu có)
+
+Mở file `config.yaml`, tìm section `pdf_processing.metadata_mapping` và thêm entry cho file PDF mới:
+
 ```yaml
 pdf_processing:
   metadata_mapping:
-    "HR_Policy_2024.pdf":
-      doc_type: "Human Resources"
+    "Ten_file_moi.pdf":
+      doc_type: "Loại văn bản"           # Mô tả loại tài liệu
+      effective_date: "2025-01-01"       # Ngày hiệu lực
+      applicable_students: "All"         # Đối tượng: "All" hoặc ">=K68"
       status: "active"
 ```
-You can also define custom regex patterns to strip unwanted headers/footers from your PDFs during processing under `text_cleanup_patterns`.
 
-### 3. Tuning the Vector Database & Retrieval
-Adjust how documents are chunked and how strictly the search engine matches queries:
-```yaml
-chunking:
-  chunk_size: 1000
-  chunk_overlap: 200
+### Bước 3: Chạy script xây dựng Knowledge Base
 
-retrieval:
-  top_k: 3
-  similarity_threshold: 0.35   # Lower = broader search, Higher = stricter match
+```bash
+python scripts/build_knowledge_base.py
+```
+
+Script sẽ tự động:
+1. Đọc tất cả PDF trong `knowledge_base/raw/`
+2. Làm sạch và phân đoạn văn bản (Hierarchical Chunking)
+3. Tạo vector embedding bằng `BAAI/bge-m3`
+4. Lưu vào ChromaDB tại `data/chroma/`
+
+> ⏳ Quá trình này mất khoảng **5-15 phút** tùy số lượng tài liệu và cấu hình máy.
+
+### (Tuỳ chọn) Reset và xây dựng lại từ đầu
+
+```bash
+python scripts/reset_vector_db.py
+python scripts/build_knowledge_base.py
 ```
 
 ---
 
-## 📁 Core Directory Structure
+## ▶️ Khởi chạy ứng dụng
 
-This repository strictly contains the core engine. Example documents, thesis materials, and development notebooks are excluded.
-
-```text
-.
-├── app.py                 # Streamlit User Interface
-├── config.yaml            # Main Configuration File
-├── docker-compose.yml     # Docker Setup
-├── Dockerfile             # App Container Image
-├── src/                   # Core Engine
-│   ├── agent/             # Logic (Orchestrator, Tools, Prompts, State)
-│   ├── pipeline/          # Data Pipeline (PDF -> Vector)
-│   ├── embeddings/        # Embedding Models & Vector DB Connectors
-│   └── utils/             # Config & Logging utilities
-├── scripts/               # Utility scripts (build/reset Knowledge Base)
-└── knowledge_base/raw/    # -> DROP YOUR PDFs HERE <-
+```bash
+streamlit run app.py
 ```
 
-## 🤝 Contributing
-Contributions are welcome! Please feel free to submit a Pull Request if you add new Agent capabilities, improve the Hybrid Retrieval, or add support for new Vector Databases.
+Ứng dụng sẽ khởi động tại: **http://localhost:8501**
 
-## 📄 License
-MIT License. Free to use and modify for any purpose.
+> 💡 **Mẹo:** Bật tính năng **"🔍 Hiển thị quá trình suy luận"** trên giao diện để quan sát Agent đang thực hiện các bước nào (Intent Gate → Retrieve → Evaluate → Rewrite → ...).
+
+---
+
+## 📁 Cấu trúc dự án
+
+```
+hust-agentic-rag/
+├── app.py                          # Điểm khởi chạy Streamlit
+├── config.yaml                     # ⚙️  Cấu hình toàn bộ hệ thống
+├── requirements.txt                # Danh sách thư viện Python
+├── .env.example                    # Mẫu biến môi trường
+├── .env                            # Biến môi trường thực tế (KHÔNG commit)
+│
+├── src/
+│   ├── agent/
+│   │   ├── graph.py                # LangGraph StateGraph (6 nodes)
+│   │   ├── orchestrator.py         # Agent orchestrator chính
+│   │   ├── prompts.py              # Prompt templates
+│   │   ├── state.py                # GraphState definition
+│   │   └── tools/
+│   │       ├── retrieve_tool.py    # Tool tìm kiếm ChromaDB
+│   │       ├── evaluate_tool.py    # Tool đánh giá tài liệu
+│   │       ├── rewrite_tool.py     # Tool viết lại truy vấn
+│   │       └── generate_tool.py    # Tool tổng hợp câu trả lời
+│   ├── pipeline/
+│   │   ├── confidence_gate.py      # Tính điểm tin cậy và phân loại đầu ra
+│   │   └── intent_classifier.py    # Phân loại ý định và trích xuất thực thể
+│   ├── memory/
+│   │   └── memory_manager.py       # Sliding Window Memory
+│   ├── vectordb/
+│   │   └── vector_db_manager.py    # Giao tiếp với ChromaDB
+│   └── utils/
+│       ├── config.py               # Nạp config.yaml và .env
+│       └── performance.py          # Tracker hiệu năng
+│
+├── scripts/
+│   ├── build_knowledge_base.py     # Script xây dựng KB (chạy offline)
+│   └── reset_vector_db.py          # Script reset ChromaDB
+│
+├── knowledge_base/
+│   └── raw/                        # 📂 Đặt file PDF tại đây
+│
+├── data/
+│   └── chroma/                     # ChromaDB (tự động tạo sau khi build KB)
+│
+├── logs/                           # Log files
+└── docs/                           # Tài liệu kỹ thuật
+```
+
+---
+
+## 🔧 Xử lý sự cố
+
+### ❌ Lỗi: `GEMINI_API_KEY not found`
+- Kiểm tra file `.env` đã được tạo từ `.env.example` chưa
+- Đảm bảo dòng `GEMINI_API_KEY=...` không có khoảng trắng thừa
+
+### ❌ Lỗi: `Collection not found` hoặc `ChromaDB empty`
+- Chưa xây dựng Knowledge Base. Chạy lại:
+  ```bash
+  python scripts/build_knowledge_base.py
+  ```
+
+### ❌ Lỗi khi dùng Ollama: `Connection refused`
+- Đảm bảo Ollama đang chạy: `ollama serve`
+- Kiểm tra model đã được pull: `ollama list`
+- Kiểm tra `base_url` trong `config.yaml` khớp với cổng Ollama đang lắng nghe
+
+### ❌ Hệ thống trả lời "Không tìm thấy thông tin" quá nhiều
+- Thử giảm `similarity_threshold` trong `config.yaml` xuống `0.25`
+- Thử giảm `min_avg_similarity` trong `agent` xuống `0.55`
+- Kiểm tra PDF đã được đặt đúng vào `knowledge_base/raw/` và đã chạy build script
+
+### ❌ Câu trả lời bị cắt ngắn hoặc thiếu thông tin
+- Tăng `max_tokens` trong section `llm` của `config.yaml`
+- Tăng `top_k` trong section `retrieval` để lấy nhiều tài liệu hơn
+- Tăng `chunk_overlap` trong section `chunking` và build lại KB
+
+---
+
+## 📄 Giấy phép
+
+Dự án được phát triển phục vụ mục đích học thuật — Đồ án Tốt nghiệp, Khoa Toán - Tin, Đại học Bách Khoa Hà Nội.
+
+**Tác giả:** Lê Quang Đức — `duclq227221@sis.hust.edu.vn`
+
+**Giảng viên hướng dẫn:** TS. Ngô Thị Hiền
