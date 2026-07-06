@@ -64,9 +64,6 @@ class GraphState(TypedDict):
     sources: List[str]
     error: str
 
-    # Memory context (conversation history)
-    memory_context: str
-
 
 # ================================================================== #
 #  Graph builder                                                       #
@@ -84,32 +81,6 @@ def build_graph(agent) -> Any:
     """
 
     # ── Node functions ─────────────────────────────────────────── #
-
-    # ── Follow-up detection ──────────────────────────────────── #
-
-    _FOLLOW_UP_MARKERS = [
-        "thế", "vậy", "còn", "thì sao", "như nào",
-        "thế còn", "vậy còn", "còn về", "đó thì",
-        "ngoài ra", "bên cạnh", "nếu", "giả sử",
-    ]
-
-    def _is_follow_up(question: str, has_memory: bool) -> bool:
-        """
-        Nhận diện câu hỏi follow-up bằng heuristic đơn giản.
-        Chỉ trigger khi đã có lịch sử hội thoại.
-        """
-        if not has_memory:
-            return False
-        q = question.strip().lower()
-        # Câu quá ngắn + có dấu hiệu follow-up
-        if len(q.split()) <= 12:
-            for marker in _FOLLOW_UP_MARKERS:
-                if marker in q:
-                    return True
-        # Bắt đầu bằng đại từ chỉ thị
-        if q.startswith(("thế ", "vậy ", "còn ", "thế ")):
-            return True
-        return False
 
     def intent_gate_node(state: GraphState) -> dict:
         """Bước 0: Phân loại intent + kiểm tra entity còn thiếu."""
@@ -137,7 +108,6 @@ def build_graph(agent) -> Any:
                 "needs_clarification": False,
                 "clarification_question": "",
                 "missing_fields": [],
-                "memory_context": memory_context,
                 "steps": state["steps"],
             }
 
@@ -174,29 +144,12 @@ def build_graph(agent) -> Any:
                 needs_clarification=True,
             )
 
-        # ── Enrich current_query cho câu follow-up ──
-        enriched_query = question
-        if _is_follow_up(question, bool(memory_context)):
-            last_turn = (
-                agent.memory.get_last_turn(session_id)
-                if agent.memory
-                else None
-            )
-            if last_turn:
-                enriched_query = f"{last_turn.question} {question}"
-                logger.info(
-                    f"[intent_gate] Follow-up detected. "
-                    f"Enriched query: '{enriched_query[:80]}'"
-                )
-
         return {
             "intent_name": result.intent_name,
             "entities": result.entities,
             "needs_clarification": result.needs_clarification,
             "clarification_question": result.clarification_question,
             "missing_fields": result.missing_fields,
-            "current_query": enriched_query,
-            "memory_context": memory_context,
             "steps": state["steps"] + [step],
         }
 
@@ -299,11 +252,8 @@ def build_graph(agent) -> Any:
 
         logger.info(f"[rewrite_node] new_query='{new_query[:60]}'")
 
-        # Reset all_results: xóa tài liệu không liên quan từ vòng trước
-        # để tránh nhiễu khi truyền vào GenerateTool và ConfidenceGate.
         return {
             "current_query": new_query,
-            "all_results": [],
             "steps": state["steps"] + [step],
         }
 
@@ -342,7 +292,6 @@ def build_graph(agent) -> Any:
         gen_result = agent._tools["generate"].execute(
             question=state["question"],
             results=all_results,
-            memory_context=state.get("memory_context", ""),
         )
 
         answer_text = gen_result.data if gen_result.success and gen_result.data else ""
@@ -378,10 +327,7 @@ def build_graph(agent) -> Any:
             }
 
         confidence = ConfidenceGate.calculate_confidence(
-            all_results,
-            state["raw_answer"],
-            hop_count=state["hop_count"],
-            top_k=state["top_k"],
+            all_results, state["raw_answer"], len(state["steps"])
         )
 
         if agent.confidence_gate is None:

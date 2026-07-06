@@ -14,9 +14,6 @@ _ANSWER_PROMPT = """\
 Dựa trên các đoạn tài liệu quy chế dưới đây, hãy trả lời câu hỏi.
 Hãy phát hiện ngôn ngữ của câu hỏi và trả lời bằng ĐÚNG ngôn ngữ đó.
 
-=== LỊCH SỬ HỘI THOẠI GẦN ĐÂY ===
-{memory_context}
-
 === TÀI LIỆU THAM KHẢO ===
 {context}
 
@@ -28,7 +25,6 @@ Hãy phát hiện ngôn ngữ của câu hỏi và trả lời bằng ĐÚNG ng�
 - Trích dẫn cụ thể số Điều, Chương, tên văn bản nếu có
 - KHÔNG bịa đặt thông tin ngoài tài liệu
 - Nếu thông tin không đủ, thừa nhận giới hạn
-- Nếu câu hỏi hiện tại là câu hỏi tiếp nối (follow-up), hãy dựa vào LỊCH SỬ HỘI THOẠI để hiểu ngữ cảnh đang hỏi về chủ đề gì
 
 === CÂU TRẢ LỜI ==="""
 
@@ -47,11 +43,10 @@ class GenerateTool(BaseTool):
         self._llm_invoker = llm_invoker
         self._system_prompt = system_prompt
 
-    def execute(self, *, question: str, results: List[Tuple], memory_context: str = "", **kwargs) -> ToolResult:
+    def execute(self, *, question: str, results: List[Tuple], **kwargs) -> ToolResult:
         context = self._build_context(results)
         prompt = _ANSWER_PROMPT.format(
             system_prompt=self._system_prompt,
-            memory_context=memory_context if memory_context else "(Không có lịch sử)",
             context=context,
             question=question,
         )

@@ -152,3 +152,57 @@ def get_prompt(prompt_name: str, **kwargs) -> str:
 def get_react_prompt(question: str) -> str:
     """Lấy ReACT prompt chính cho một câu hỏi"""
     return get_prompt("main", question=question)
+
+
+# ------------------------------------------------------------------ #
+# [v5 — Auto-Discovery] Dynamic System Prompt Builder                 #
+# ------------------------------------------------------------------ #
+
+def build_system_prompt(
+    university_name: str = "",
+    document_list: list = None,
+) -> str:
+    """
+    Sinh REACT_SYSTEM_PROMPT động dựa trên thông tin từ university_schema.yaml.
+
+    Nếu university_name và document_list được cung cấp → tạo prompt cá nhân hóa.
+    Nếu không → trả về REACT_SYSTEM_PROMPT mặc định (không thay đổi hành vi cũ).
+
+    Args:
+        university_name: Tên trường đại học (từ university_schema.yaml['university']['name']).
+        document_list: Danh sách tài liệu (từ university_schema.yaml['university']['source_documents']).
+
+    Returns:
+        System prompt string đã được inject thông tin trường.
+    """
+    document_list = document_list or []
+
+    if not university_name and not document_list:
+        return REACT_SYSTEM_PROMPT
+
+    # Build tên trường (fallback nếu trống)
+    uni_display = university_name if university_name else "trường đại học"
+
+    # Build danh sách tài liệu
+    if document_list:
+        # Bỏ phần mở rộng .json để hiển thị sạch hơn
+        doc_names = [
+            d.replace(".json", "").replace("_", " ")
+            for d in document_list
+        ]
+        doc_lines = "\n".join(f"- {name}" for name in doc_names[:15])  # Giới hạn 15 tài liệu
+    else:
+        doc_lines = "- (Tài liệu quy chế của trường)"
+
+    return f"""Bạn là trợ lý AI chuyên về quy định và chính sách đào tạo tại {uni_display}.
+
+Nhiệm vụ: Trả lời chính xác các câu hỏi của sinh viên dựa trên các tài liệu quy chế chính thức.
+
+Tài liệu bạn có quyền truy cập:
+{doc_lines}
+
+Nguyên tắc:
+1. Chỉ dùng thông tin từ tài liệu được cung cấp, KHÔNG bịa đặt
+2. Trích dẫn rõ ràng: số Điều, Chương, tên văn bản
+3. Nếu thông tin không đủ → thừa nhận giới hạn, gợi ý liên hệ phòng ban
+4. Trả lời bằng ngôn ngữ của câu hỏi, rõ ràng, có cấu trúc"""
