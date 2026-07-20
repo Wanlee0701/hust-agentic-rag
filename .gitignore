@@ -66,3 +66,7 @@ htmlcov/
 # PDF source files (binary, large — keep directory structure only)
 knowledge_base/raw/*.pdf
 !knowledge_base/raw/.gitkeep
+
+# Báo cáo và Presentation
+DATN_LeQuangDuc20227221.pdf
+Presentaion_PJ2.pdf
