@@ -93,9 +93,6 @@ def _build_llm(llm_config: Dict[str, Any]):
 def _invoke_llm(llm, provider: str, prompt: str) -> str:
     """Gọi LLM và trả về plain text, tương thích cả Ollama lẫn Gemini."""
     if provider == "gemini":
-        # Streamlit chạy các component trên các luồng con không có asyncio loop.
-        # SDK google-genai mới (v2) sử dụng httpx async bên dưới và sẽ gây deadlock.
-        # Giải pháp: Ép tạo và sử dụng một event loop cụ thể cho luồng này.
         import asyncio
         try:
             loop = asyncio.get_event_loop()
@@ -104,7 +101,6 @@ def _invoke_llm(llm, provider: str, prompt: str) -> str:
             asyncio.set_event_loop(loop)
 
     response = llm.invoke(prompt)
-    # Gemini trả về AIMessage, Ollama trả về str
     if hasattr(response, "content"):
         return response.content.strip()
     return str(response).strip()
@@ -330,6 +326,11 @@ class StudentRegulationAgent:
 
         agent_config = self.config.get("agent", {})
 
+        # Lấy memory context trước khi tạo initial_state
+        memory_context = ""
+        if self.memory:
+            memory_context = self.memory.get_context(session_id)
+
         initial_state: Dict[str, Any] = {
             "question": question,
             "session_id": session_id,
@@ -355,6 +356,7 @@ class StudentRegulationAgent:
             "steps": [],
             "sources": [],
             "error": "",
+            "memory_context": memory_context,
         }
 
         try:

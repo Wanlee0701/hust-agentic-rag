@@ -1,27 +1,9 @@
 version: '3.8'
 
 services:
-  # Ollama LLM Service
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama-service
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    environment:
-      - OLLAMA_MODELS_PATH=/root/.ollama/models
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    command: serve
-    restart: unless-stopped
-    networks:
-      - chatbot-network
-
-  # Chatbot Application
+  # ================================================================== #
+  #  Chatbot Application (Streamlit + LangGraph)                        #
+  # ================================================================== #
   chatbot:
     build:
       context: .
@@ -30,27 +12,48 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./knowledge_base:/app/knowledge_base
+      # Source PDFs — read-only, mount to rebuild KB inside container
+      - ./knowledge_base:/app/knowledge_base:ro
+      # Chroma DB + intermediate data — persisted across restarts
       - ./data:/app/data
+      # Logs
       - ./logs:/app/logs
-      - ./models:/app/models
+      # HuggingFace embedding model cache — avoids re-download on restart
+      - hf_cache:/app/models
+    env_file:
+      - .env
     environment:
-      - LLM_SERVICE_URL=http://ollama:11434
       - PYTHONUNBUFFERED=1
-      - LOG_LEVEL=INFO
-    depends_on:
-      ollama:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      - HF_HOME=/app/models
+      # Override Ollama URL in config.yaml when using ollama profile
+      # (config.yaml defaults to http://localhost:11434 which matches the ollama service)
+    restart: unless-stopped
+    networks:
+      - chatbot-network
+
+  # ================================================================== #
+  #  Ollama LLM (optional — chỉ dùng khi provider='ollama')             #
+  #  Kích hoạt: docker compose --profile ollama up                      #
+  #  Sau đó pull model: docker exec ollama-service ollama pull llama3   #
+  # ================================================================== #
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-service
+    profiles:
+      - ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
     restart: unless-stopped
     networks:
       - chatbot-network
 
 volumes:
+  hf_cache:
+    driver: local
   ollama_data:
     driver: local
 

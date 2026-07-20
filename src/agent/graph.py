@@ -82,6 +82,30 @@ def build_graph(agent) -> Any:
 
     # ── Node functions ─────────────────────────────────────────── #
 
+    # ── Follow-up detection ──────────────────────────────────── #
+
+    _FOLLOW_UP_MARKERS = [
+        "thế", "vậy", "còn", "thì sao", "như nào",
+        "thế còn", "vậy còn", "còn về", "đó thì",
+        "ngoài ra", "bên cạnh", "nếu", "giả sử",
+    ]
+
+    def _is_follow_up(question: str, has_memory: bool) -> bool:
+        """
+        Nhận diện câu hỏi follow-up bằng heuristic đơn giản.
+        Chỉ trigger khi đã có lịch sử hội thoại.
+        """
+        if not has_memory:
+            return False
+        q = question.strip().lower()
+        if len(q.split()) <= 12:
+            for marker in _FOLLOW_UP_MARKERS:
+                if marker in q:
+                    return True
+        if q.startswith(("thế ", "vậy ", "còn ", "thế ")):
+            return True
+        return False
+
     def intent_gate_node(state: GraphState) -> dict:
         """Bước 0: Phân loại intent + kiểm tra entity còn thiếu."""
         question = state["question"]
@@ -108,6 +132,7 @@ def build_graph(agent) -> Any:
                 "needs_clarification": False,
                 "clarification_question": "",
                 "missing_fields": [],
+                "memory_context": memory_context,
                 "steps": state["steps"],
             }
 
@@ -144,12 +169,29 @@ def build_graph(agent) -> Any:
                 needs_clarification=True,
             )
 
+        # ── Enrich current_query cho câu follow-up ──
+        enriched_query = question
+        if _is_follow_up(question, bool(memory_context)):
+            last_turn = (
+                agent.memory.get_last_turn(session_id)
+                if agent.memory
+                else None
+            )
+            if last_turn:
+                enriched_query = f"{last_turn.question} {question}"
+                logger.info(
+                    f"[intent_gate] Follow-up detected. "
+                    f"Enriched query: '{enriched_query[:80]}'"
+                )
+
         return {
             "intent_name": result.intent_name,
             "entities": result.entities,
             "needs_clarification": result.needs_clarification,
             "clarification_question": result.clarification_question,
             "missing_fields": result.missing_fields,
+            "current_query": enriched_query,
+            "memory_context": memory_context,
             "steps": state["steps"] + [step],
         }
 
@@ -197,6 +239,7 @@ def build_graph(agent) -> Any:
             min_avg_sim=state["min_avg_sim"],
             llm_invoker=agent._create_llm_invoker(),
             top_k=state["top_k"],
+            memory_context=state.get("memory_context", ""),
         )
 
         eval_data = eval_result.data
@@ -234,6 +277,7 @@ def build_graph(agent) -> Any:
         rewrite_result = agent._tools["rewrite"].execute(
             question=state["question"],
             reason=state["eval_reason"],
+            memory_context=state.get("memory_context", ""),
         )
 
         new_query = (
@@ -292,6 +336,7 @@ def build_graph(agent) -> Any:
         gen_result = agent._tools["generate"].execute(
             question=state["question"],
             results=all_results,
+            memory_context=state.get("memory_context", ""),
         )
 
         answer_text = gen_result.data if gen_result.success and gen_result.data else ""
@@ -378,10 +423,14 @@ def build_graph(agent) -> Any:
         Sau evaluate:
           - Tài liệu liên quan → generate
           - Đã đủ hop → force_generate
+          - KHÔNG có tài liệu nào sau retrieve → reject ngay, không rewrite
           - Còn hop + chưa liên quan → rewrite
         """
         if state["is_relevant"]:
             return "relevant"
+        # ── EARLY REJECT: không có doc nào → ngắt luồng, vào thẳng generate ──
+        if not state["all_results"]:
+            return "force_generate"
         if state["hop_count"] >= state["max_hops"]:
             return "force_generate"
         return "rewrite"

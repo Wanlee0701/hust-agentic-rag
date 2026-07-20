@@ -34,7 +34,10 @@ env/
 *~
 .DS_Store
 
-# Data & Models
+# Claude Code
+.claude/
+
+# Data & Models (generated, not source)
 data/
 models/
 *.pkl
@@ -44,7 +47,7 @@ models/
 logs/
 *.log
 
-# Local
+# Environment secrets
 .env
 .env.local
 config.local.yaml
@@ -52,20 +55,14 @@ config.local.yaml
 # Dependencies
 node_modules/
 
-# Ollama
-.ollama/
-
-# Test coverage
-.coverage
-htmlcov/
-
 # Docker
 .dockerignore
 
-# Non-core project files (Docs, Thesis, Notebooks)
-docs/
-notebooks/
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Ignore actual PDF files but keep the directory structure
+# PDF source files (binary, large — keep directory structure only)
 knowledge_base/raw/*.pdf
 !knowledge_base/raw/.gitkeep

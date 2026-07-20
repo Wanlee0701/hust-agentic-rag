@@ -17,15 +17,21 @@ logger = logging.getLogger(__name__)
 _EVALUATE_PROMPT = """\
 Bạn là trợ lý AI về quy chế đào tạo ĐHBK Hà Nội.
 
-Câu hỏi của sinh viên: "{question}"
+=== LỊCH SỬ HỘI THOẠI GẦN ĐÂY ===
+{memory_context}
+
+=== CÂU HỎI HIỆN TẠI ===
+"{question}"
 
 Dưới đây là các đoạn tài liệu tìm được:
 {context}
 
 Nhiệm vụ: Đánh giá xem tài liệu trên có ĐỀ CẬP đến chủ đề câu hỏi hay không.
-Lưu ý:
+Lưu ý QUAN TRỌNG:
+- Dựa vào LỊCH SỬ HỘI THOẠI để hiểu ngữ cảnh câu hỏi hiện tại.
+- Nếu các turn trước đang nói về chủ đề A, thì câu hỏi hiện tại nhiều khả năng cũng về A.
 - Tài liệu KHÔNG cần trả lời hoàn chỉnh 100%.
-- Chỉ cần chứa thông tin liên quan là ĐỦ (relevant=true).
+- Chỉ cần chứa thông tin liên quan đến chủ đề (có xét đến ngữ cảnh hội thoại) là ĐỦ (relevant=true).
 - Chỉ relevant=false nếu hoàn toàn khác chủ đề.
 
 Trả về JSON duy nhất:
@@ -50,6 +56,7 @@ class EvaluateTool(BaseTool):
         min_avg_sim: float,
         llm_invoker: Callable[[str], str],
         top_k: int = 3,
+        memory_context: str = "",
         **kwargs,
     ) -> ToolResult:
         if not results:
@@ -78,7 +85,9 @@ class EvaluateTool(BaseTool):
         # ── Tầng 2: LLM Evaluate ──
         logger.info("[EvaluateTool] avg_sim thấp → gọi LLM evaluate")
         context = self._build_context(results[:top_k])
-        is_relevant, reason = self._llm_evaluate(question, context, llm_invoker)
+        is_relevant, reason = self._llm_evaluate(
+            question, context, llm_invoker, memory_context
+        )
         return ToolResult(
             success=True,
             data={"relevant": is_relevant, "avg_sim": avg_sim, "reason": reason},
@@ -98,9 +107,14 @@ class EvaluateTool(BaseTool):
 
     @staticmethod
     def _llm_evaluate(
-        question: str, context: str, llm_invoker: Callable
+        question: str, context: str, llm_invoker: Callable,
+        memory_context: str = "",
     ) -> Tuple[bool, str]:
-        prompt = _EVALUATE_PROMPT.format(question=question, context=context[:2000])
+        prompt = _EVALUATE_PROMPT.format(
+            question=question,
+            context=context[:2000],
+            memory_context=memory_context if memory_context else "(Không có lịch sử)",
+        )
         raw = ""
         try:
             raw = llm_invoker(prompt)

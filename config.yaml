@@ -249,7 +249,7 @@ llm:
 # ============================================================================
 agent:
   type: "react"
-  max_iterations: 5
+  max_iterations: 2
   # Ngưỡng confidence để trả lời bình thường (≥ high → OK, < low → từ chối)
   high_confidence_threshold: 0.65   # ≥ 65%: trả lời bình thường
   low_confidence_threshold: 0.35    # < 35%: từ chối, trả về "không tìm thấy"
@@ -301,16 +301,6 @@ intents:
       - "Sinh viên bị trượt bao nhiêu tín thì buộc thôi học?"
       - "Điều kiện để bảo lưu kết quả học tập?"
       - "Học bổng KKHT là gì?"
-
-  ACADEMIC_DISCIPLINE:
-    description: "Xử lý học vụ, cảnh cáo, buộc thôi học, kỷ luật"
-    requires_entities: false
-    required_fields: []
-    clarification_template: ""
-    examples:
-      - "Sinh viên bị trượt 14 tín thì cảnh cáo mức mấy?"
-      - "Khi nào bị buộc thôi học?"
-      - "Điểm TBCTL thấp hơn bao nhiêu thì bị cảnh cáo?"
 
   SCHOLARSHIP:
     description: "Điều kiện, mức, quy trình xét học bổng Trần Đại Nghĩa và KKHT"
